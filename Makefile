@@ -1,5 +1,4 @@
 # GCFeed 命令入口。
-# 依赖：Docker Compose（一键启动）、Go（本地编译与测试）、Node（前端构建）。
 
 .PHONY: help up down logs ps test fmt build-api build-web clean
 
