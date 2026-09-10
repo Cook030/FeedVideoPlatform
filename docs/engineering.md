@@ -169,6 +169,7 @@ RabbitMQ 队列约定：
 - 消费失败按 `x-retry-count` 重投，上限由 `rabbitmq.max_retries` 控制（默认 3），超限进入死信队列，不使用无限 `requeue`。
 - 消息 JSON 解析失败属于永久性错误，直接丢弃，不重投。
 - 队列参数在 RabbitMQ 中不可变：已存在的队列若缺少死信参数，启动时会尝试自动迁移；迁移只在队列空闲且为空时执行，有积压时保留旧队列并告警。
+- 消费产生非幂等副作用时，应注入 `EventDeduplicator` 做事件级幂等：先 `Claim` 占位，处理失败必须 `Release`，否则重投会被误判为已处理而丢事件。
 
 ## 8. Interfaces 规则
 
