@@ -223,6 +223,18 @@ func (s *Service) SaveExposures(ctx context.Context, inputs []ExposureInput) (*E
 	return &ExposureResult{Exposures: exposures}, nil
 }
 
+// ApplyViewEvent 把一条观看行为折算成兴趣权重，增量更新用户兴趣向量。
+// 曝光这类非正向行为不参与，避免把"推给用户看过"误当成"用户感兴趣"。
+func (s *Service) ApplyViewEvent(ctx context.Context, userID int64, videoID int64, eventType string, watchMs int, completed bool) error {
+	if userID <= 0 || videoID <= 0 {
+		return nil
+	}
+	if !domainrecommendation.IsPositiveEventType(eventType) {
+		return nil
+	}
+	return s.repo.ApplyUserInterest(ctx, userID, videoID, domainrecommendation.EventWeight(eventType, watchMs, completed))
+}
+
 func (s *Service) rankCandidates(ctx context.Context, userID int64, pool []*domainrecommendation.Candidate) ([]*domainrecommendation.Candidate, error) {
 	if len(pool) == 0 {
 		return []*domainrecommendation.Candidate{}, nil

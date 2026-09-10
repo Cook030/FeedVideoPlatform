@@ -8,7 +8,9 @@ import (
 	"syscall"
 
 	applicationembedding "GCFeed/internal/application/embedding"
+	applicationexposure "GCFeed/internal/application/exposure"
 	applicationinteraction "GCFeed/internal/application/interaction"
+	applicationrecommendation "GCFeed/internal/application/recommendation"
 	applicationvideo "GCFeed/internal/application/video"
 	infracache "GCFeed/internal/infra/cache"
 	infraconfig "GCFeed/internal/infra/config"
@@ -19,6 +21,7 @@ import (
 	infrafeed "GCFeed/internal/infra/persistence/feed"
 	infrainteraction "GCFeed/internal/infra/persistence/interaction"
 	migration "GCFeed/internal/infra/persistence/migration"
+	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
 
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -94,7 +97,16 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	embeddingRepo := infraembedding.New(gormDB)
 	embeddingService := applicationembedding.New(embeddingRepo, nil)
 	embeddingWorker := applicationembedding.NewVideoEmbeddingWorker(embeddingService, rabbitMQ)
-	return embeddingWorker.Start(ctx)
+	if err := embeddingWorker.Start(ctx); err != nil {
+		return err
+	}
+
+	// 观看行为事件消费链路。
+	interestCache := infracache.NewUserInterestCache(redisClient)
+	recommendationRepo := infrarecommendation.New(gormDB, infrarecommendation.WithUserInterestCache(interestCache))
+	recommendationService := applicationrecommendation.New(recommendationRepo)
+	viewEventWorker := applicationexposure.NewViewEventWorker(recommendationService, rabbitMQ)
+	return viewEventWorker.Start(ctx)
 }
 
 func closeSQL(db *sql.DB) {

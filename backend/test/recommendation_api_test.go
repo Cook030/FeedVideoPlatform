@@ -69,12 +69,20 @@ type recommendationExposureResponse struct {
 }
 
 type memoryRecommendationRepo struct {
-	mu        sync.Mutex
-	pool      []*domainrecommendation.Candidate
-	vectors   map[int64][]float64
-	interest  map[int64][]float64
-	published map[int64]bool
-	exposures map[string]*domainrecommendation.Exposure
+	mu              sync.Mutex
+	pool            []*domainrecommendation.Candidate
+	vectors         map[int64][]float64
+	interest        map[int64][]float64
+	interestWeight  map[int64]float64
+	appliedInterest []memoryAppliedInterest
+	published       map[int64]bool
+	exposures       map[string]*domainrecommendation.Exposure
+}
+
+type memoryAppliedInterest struct {
+	UserID  int64
+	VideoID int64
+	Weight  float64
 }
 
 func newMemoryRecommendationRepo() *memoryRecommendationRepo {
@@ -94,6 +102,9 @@ func newMemoryRecommendationRepo() *memoryRecommendationRepo {
 		},
 		interest: map[int64][]float64{
 			42: {1, 0},
+		},
+		interestWeight: map[int64]float64{
+			42: 1,
 		},
 		published: map[int64]bool{1: true, 2: true, 3: true, 4: true},
 		exposures: map[string]*domainrecommendation.Exposure{},
@@ -167,6 +178,26 @@ func (r *memoryRecommendationRepo) ListRecentExposures(ctx context.Context, user
 		exposures = append(exposures, cloneRecommendationExposure(exposure))
 	}
 	return exposures, nil
+}
+
+func (r *memoryRecommendationRepo) ApplyUserInterest(ctx context.Context, userID int64, videoID int64, weight float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.appliedInterest = append(r.appliedInterest, memoryAppliedInterest{UserID: userID, VideoID: videoID, Weight: weight})
+	vector := r.vectors[videoID]
+	current := r.interest[userID]
+	if len(vector) == 0 || len(current) != len(vector) {
+		return nil
+	}
+	previousWeight := r.interestWeight[userID]
+	updated := make([]float64, len(current))
+	for i := range current {
+		updated[i] = (current[i]*previousWeight + vector[i]*weight) / (previousWeight + weight)
+	}
+	r.interest[userID] = updated
+	r.interestWeight[userID] = previousWeight + weight
+	return nil
 }
 
 func (r *memoryRecommendationRepo) SaveExposures(ctx context.Context, writes []*domainrecommendation.ExposureWrite) ([]*domainrecommendation.Exposure, error) {

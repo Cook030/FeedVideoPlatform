@@ -16,10 +16,26 @@ import (
 )
 
 const hotScoreExpression = "COALESCE(vs.like_count, 0) * 3 + COALESCE(vs.comment_count, 0) * 5 + COALESCE(vs.favorite_count, 0) * 4"
-const positiveEventWindow = 30 * 24 * time.Hour
+
+// UserInterestCache 缓存用户兴趣向量，未命中时由本仓储回源聚合后回填。
+type UserInterestCache interface {
+	Load(ctx context.Context, userID int64) ([]float64, bool, error)
+	Store(ctx context.Context, userID int64, vector []float64, weight float64) error
+	Apply(ctx context.Context, userID int64, videoVector []float64, weight float64) error
+}
 
 type Repository struct {
-	db *gorm.DB
+	db            *gorm.DB
+	interestCache UserInterestCache
+}
+
+type Option func(*Repository)
+
+// WithUserInterestCache 启用用户兴趣向量缓存，未设置时每次推荐都回源聚合。
+func WithUserInterestCache(cache UserInterestCache) Option {
+	return func(r *Repository) {
+		r.interestCache = cache
+	}
 }
 
 type candidateModel struct {
@@ -34,8 +50,14 @@ type videoVectorModel struct {
 	EmbeddingJSON string
 }
 
-func New(db *gorm.DB) *Repository {
-	return &Repository{db: db}
+func New(db *gorm.DB, options ...Option) *Repository {
+	repository := &Repository{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(repository)
+		}
+	}
+	return repository
 }
 
 func (r *Repository) ListCandidatePool(ctx context.Context, userID int64, limit int) ([]*domainrecommendation.Candidate, error) {
@@ -80,17 +102,39 @@ func (r *Repository) ListCandidatePool(ctx context.Context, userID int64, limit 
 	return candidates, nil
 }
 
+// LoadUserInterestVector 读取用户兴趣向量，优先命中缓存，未命中时回源聚合。
 func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) ([]float64, bool, error) {
+	if r.interestCache != nil {
+		if vector, ok, err := r.interestCache.Load(ctx, userID); err == nil && ok {
+			return vector, true, nil
+		}
+	}
+
+	vector, totalWeight, err := r.aggregateUserInterestVector(ctx, userID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(vector) == 0 || totalWeight == 0 {
+		return nil, false, nil
+	}
+	if r.interestCache != nil {
+		_ = r.interestCache.Store(ctx, userID, vector, totalWeight)
+	}
+	return vector, true, nil
+}
+
+// aggregateUserInterestVector 扫描最近的正向观看行为，返回归一化向量和累计权重。
+func (r *Repository) aggregateUserInterestVector(ctx context.Context, userID int64) ([]float64, float64, error) {
 	rows, err := r.db.WithContext(ctx).
 		Table("video_view_events AS ev").
 		Select("ve.embedding_json, ev.event_type, ev.watch_ms, ev.completed").
 		Joins("JOIN video_embedding AS ve ON ve.video_id = ev.video_id AND ve.model = ?", domainembedding.HashNgramModel).
-		Where("ev.user_id = ? AND ev.created_at >= ? AND ev.event_type IN ?", userID, time.Now().Add(-positiveEventWindow), positiveEventTypes()).
+		Where("ev.user_id = ? AND ev.created_at >= ? AND ev.event_type IN ?", userID, time.Now().Add(-domainrecommendation.PositiveEventWindow), positiveEventTypes()).
 		Order("ev.created_at DESC").
 		Limit(200).
 		Rows()
 	if err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -102,7 +146,7 @@ func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) (
 		var watchMs int
 		var completed bool
 		if err := rows.Scan(&embeddingJSON, &eventType, &watchMs, &completed); err != nil {
-			return nil, false, err
+			return nil, 0, err
 		}
 		vector, err := decodeVector(embeddingJSON)
 		if err != nil || len(vector) == 0 {
@@ -114,22 +158,39 @@ func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) (
 		if len(vector) != len(sum) {
 			continue
 		}
-		weight := eventWeight(eventType, watchMs, completed)
+		weight := domainrecommendation.EventWeight(eventType, watchMs, completed)
 		for i := range vector {
 			sum[i] += vector[i] * weight
 		}
 		totalWeight += weight
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
 	if len(sum) == 0 || totalWeight == 0 {
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	for i := range sum {
 		sum[i] = sum[i] / totalWeight
 	}
-	return sum, true, nil
+	return sum, totalWeight, nil
+}
+
+// ApplyUserInterest 用单个视频的向量增量修正缓存中的用户兴趣向量。
+// 没有配置缓存时无需写入，回源聚合本身就是实时的。
+func (r *Repository) ApplyUserInterest(ctx context.Context, userID int64, videoID int64, weight float64) error {
+	if r.interestCache == nil || userID <= 0 || videoID <= 0 || weight <= 0 {
+		return nil
+	}
+	vectors, err := r.LoadVideoVectors(ctx, []int64{videoID})
+	if err != nil {
+		return err
+	}
+	vector := vectors[videoID]
+	if len(vector) == 0 {
+		return nil
+	}
+	return r.interestCache.Apply(ctx, userID, vector, weight)
 }
 
 func (r *Repository) LoadVideoVectors(ctx context.Context, videoIDs []int64) (map[int64][]float64, error) {
@@ -253,24 +314,6 @@ func positiveEventTypes() []string {
 	return []string{
 		domainexposure.EventTypePlay,
 		domainexposure.EventTypeComplete,
-	}
-}
-
-func eventWeight(eventType string, watchMs int, completed bool) float64 {
-	switch eventType {
-	case domainexposure.EventTypeComplete:
-		return 3
-	case domainexposure.EventTypePlay:
-		weight := 1 + float64(watchMs)/30000
-		if weight > 2 {
-			weight = 2
-		}
-		if completed {
-			weight += 1
-		}
-		return weight
-	default:
-		return 1
 	}
 }
 

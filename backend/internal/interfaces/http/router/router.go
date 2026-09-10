@@ -70,10 +70,8 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 	// 下面按领域模块组装依赖：Repository -> Service -> Handler。
 	videoRepo := infravideo.New(gormDB)
 	feedRepo := infrafeed.New(gormDB)
-	recommendationRepo := infrarecommendation.New(gormDB)
-	recommendationService := applicationrecommendation.New(recommendationRepo)
-	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
-	feedOptions := []applicationfeed.Option{applicationfeed.WithRecommender(recommendationService)}
+	var interestCache *infracache.UserInterestCache
+	feedOptions := []applicationfeed.Option{}
 	videoOptions := []applicationvideo.Option{}
 	interactionOptions := []applicationinteraction.Option{}
 	exposureOptions := []applicationexposure.Option{}
@@ -84,6 +82,7 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
+		interestCache = infracache.NewUserInterestCache(redisClient)
 		// 消息实时通道使用独立 Redis 客户端做 Pub/Sub 扇出，支持 API 多实例。
 		messageStream = infracache.NewMessageStream(cfg.Redis)
 		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
@@ -91,6 +90,14 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
 	}
+	recommendationOptions := []infrarecommendation.Option{}
+	if interestCache != nil {
+		recommendationOptions = append(recommendationOptions, infrarecommendation.WithUserInterestCache(interestCache))
+	}
+	recommendationRepo := infrarecommendation.New(gormDB, recommendationOptions...)
+	recommendationService := applicationrecommendation.New(recommendationRepo)
+	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
+	feedOptions = append(feedOptions, applicationfeed.WithRecommender(recommendationService))
 	accountRepo := infraaccount.New(gormDB)
 	if feedCache != nil {
 		// 资料变更后失效卡片缓存；视频删除后失效对应卡片缓存。
