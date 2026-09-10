@@ -86,6 +86,8 @@
 
 Feed 依赖已有 `video` 和 `video_stat` 表读取已上线视频与互动计数。曝光上报写入 `video_view_events` 行为流水，并在 `event_type=exposed` 时维护 `exposures` 聚合索引。
 
+落库成功后再投递 `view.event.recorded` 事件到 `gcfeed.exposure`，由 `ViewEventWorker` 消费：播放和完播事件增量更新用户兴趣向量，曝光只写流水、不参与兴趣计算。曝光上报本身保持同步落库，因为推荐去重依赖 `exposures` 表的实时写入。
+
 `video_view_events`：
 
 | 字段 | 说明 |

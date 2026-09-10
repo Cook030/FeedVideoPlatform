@@ -141,6 +141,12 @@ backend/internal/interfaces/http/interaction/
 | Queue | `gcfeed.interaction.action_changed` |
 | Routing key | `interaction.action_changed` |
 
+失败处理：
+
+- 投递失败：`setActionAsync` 回退到 `setActionSync`，由接口同步写入 MySQL 和计数，用户请求不会失败。
+- 消费失败：消息按 `x-retry-count` 重投，默认最多 3 次（配置 `rabbitmq.max_retries`），超过上限后进入死信队列 `gcfeed.interaction.action_changed.dlq`，不会无限 requeue。
+- 重复消费：`user_id + video_id + action_type` 唯一键与幂等键保证收敛到一次计数变化。
+
 ### 3.4 发表评论
 
 #### POST `/api/videos/{videoId}/comments`

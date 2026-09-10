@@ -40,13 +40,13 @@ flowchart LR
   API -->|"读写 account / video / video_stat"| MySQL
   API -->|"保存和读取本地文件"| Uploads
   API -.->|"缓存 Feed 与计数"| Redis
-  API -.->|"投递互动和审核事件"| MQ
+  API -.->|"投递互动、发布和曝光事件"| MQ
   API -.->|"迁移媒体文件"| ObjectStorage
 
   class Web,Client client;
   class API system;
-  class MySQL,Uploads store;
-  class Redis,MQ,ObjectStorage future;
+  class MySQL,Uploads,Redis,MQ store;
+  class ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
@@ -313,6 +313,6 @@ flowchart TB
 
 - 当前代码以 Go API 单体承载账户、视频、Feed 与上传能力，内部按接口层、应用层、领域层、基础设施层组织。
 - 对外接口统一挂载在 `/api/*`，静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
-- 数据持久化使用 MySQL，GORM 自动迁移 `account`、`video`、`video_stat` 三张表。
+- 数据持久化使用 MySQL，由 `infra/persistence/migration` 统一执行 GORM AutoMigrate，覆盖账户、视频与统计、视频向量、Feed inbox、曝光与行为流水、互动、消息、播放、关系等表。
 - Feed 通过 `scene` 分发策略：`timeline` 按 `published_at DESC, id DESC` 排序，`hot` 按最近 60 分钟互动热度排序，并通过 Base64 游标分页。
 - 推荐、互动、审核、消息、治理和监控模块作为演进边界保留，后续可从单体内模块逐步扩展为异步事件和独立服务。

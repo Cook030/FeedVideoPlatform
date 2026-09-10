@@ -163,6 +163,13 @@ GORM Repository 规则：
 - 列表查询使用稳定排序字段和游标。
 - 返回 Domain 实体，避免把 GORM 模型泄漏到 Application。
 
+RabbitMQ 队列约定：
+
+- 业务队列由 `infra/mq` 统一声明，并绑定同名派生的死信交换机 `<queue>.dlx` 与死信队列 `<queue>.dlq`。
+- 消费失败按 `x-retry-count` 重投，上限由 `rabbitmq.max_retries` 控制（默认 3），超限进入死信队列，不使用无限 `requeue`。
+- 消息 JSON 解析失败属于永久性错误，直接丢弃，不重投。
+- 队列参数在 RabbitMQ 中不可变：已存在的队列若缺少死信参数，启动时会尝试自动迁移；迁移只在队列空闲且为空时执行，有积压时保留旧队列并告警。
+
 ## 8. Interfaces 规则
 
 Interfaces 层负责 HTTP 入口。

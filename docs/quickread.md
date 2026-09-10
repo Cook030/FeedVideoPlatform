@@ -213,10 +213,11 @@ queue: gcfeed.interaction.action_changed
 routing key: interaction.action_changed
 ```
 
-读这条链路时，重点理解两个结果：
+读这条链路时，重点理解三个结果：
 
 - 接口立即返回 Redis 里的最新计数。
 - MySQL 通过 Worker 最终写入。
+- 投递失败回退同步落库；消费失败有限重投（默认 3 次），超限进入死信队列，不会无限 requeue。
 
 ## 5. 用测试理解代码
 
@@ -321,4 +322,10 @@ curl http://127.0.0.1:8080/health
 
 ## 11. 当前最值得关注的下一步
 
-下一步适合实现曝光/播放事件批量落库。建议按“接口批量接收 -> RabbitMQ 投递 -> Worker 批量写库 -> 聚合更新统计”的路径阅读和扩展现有代码。
+曝光/播放事件的消费链路已经接通：`ViewEventWorker` 消费 `view.event.recorded`，播放和完播事件增量更新用户兴趣向量缓存（Redis，TTL 30 分钟，未命中回源聚合）。曝光上报仍走同步落库，因为推荐去重依赖 `exposures` 表的实时写入，改成异步会引入一致性窗口。
+
+已知缺口，适合作为下一步：
+
+- 观看事件消费端缺少按 `event_id` 的幂等保护，重复投递会重复累加兴趣权重。
+- 视频发布与曝光链路的 MQ 投递失败目前只记录日志，没有降级补偿。
+- `rabbitmq_publish_error_count`、队列积压等指标尚未落地。
