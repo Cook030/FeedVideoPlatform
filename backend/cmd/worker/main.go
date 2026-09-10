@@ -105,7 +105,9 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	interestCache := infracache.NewUserInterestCache(redisClient)
 	recommendationRepo := infrarecommendation.New(gormDB, infrarecommendation.WithUserInterestCache(interestCache))
 	recommendationService := applicationrecommendation.New(recommendationRepo)
-	viewEventWorker := applicationexposure.NewViewEventWorker(recommendationService, rabbitMQ)
+	// 兴趣向量是幂等累加，重投会重复累加，因此按观看记录 ID 做事件级去重。
+	eventDedupCache := infracache.NewEventDedupCache(redisClient)
+	viewEventWorker := applicationexposure.NewViewEventWorker(recommendationService, rabbitMQ, eventDedupCache)
 	return viewEventWorker.Start(ctx)
 }
 
