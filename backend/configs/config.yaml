@@ -30,3 +30,5 @@ rabbitmq:
   exposure_exchange: "gcfeed.exposure"
   view_event_recorded_queue: "gcfeed.exposure.view_event_recorded"
   view_event_recorded_routing: "exposure.view_event_recorded"
+  # 消费失败最多重投 3 次，之后消息进入 <queue>.dlq 死信队列。
+  max_retries: 3

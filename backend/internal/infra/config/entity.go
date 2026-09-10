@@ -50,4 +50,6 @@ type RabbitMQConfig struct {
 	ExposureExchange         string `yaml:"exposure_exchange"`
 	ViewEventRecordedQueue   string `yaml:"view_event_recorded_queue"`
 	ViewEventRecordedRouting string `yaml:"view_event_recorded_routing"`
+	// MaxRetries 限制单条消息的重投次数，超过后消息进入死信队列而不是无限 requeue。
+	MaxRetries int `yaml:"max_retries"`
 }
