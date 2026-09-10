@@ -12,7 +12,6 @@
 | 消息队列 | RabbitMQ |
 | 鉴权 | JWT |
 | Web | React、Vite |
-| 规格驱动 | OpenSpec |
 
 ## 2. 后端分层
 
@@ -324,12 +323,6 @@ cd frontend
 npm run build
 ```
 
-OpenSpec 校验命令：
-
-```bash
-openspec validate --all --strict
-```
-
 ## 15. 文档同步
 
 改动以下内容时同步文档：
@@ -337,7 +330,7 @@ openspec validate --all --strict
 | 改动 | 需要同步 |
 | --- | --- |
 | 新增接口 | `docs/product.md`、`docs/modules/{module}.md` |
-| 新增模块 | `docs/modules/README.md`、模块文档、OpenSpec |
+| 新增模块 | `docs/modules/README.md`、模块文档 |
 | 改目录或分层 | 本文、`docs/quickread.md` |
 | 改核心链路 | `docs/architecture.md` |
 | 改前端页面 | `docs/uiux.md` |

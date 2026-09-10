@@ -162,15 +162,7 @@ Prometheus 抓取目标：
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
-| [openspec/](openspec/) | OpenSpec 项目基线和变更规格 |
 
 ## 开发方式
-
-新增功能优先按 OpenSpec 建 change，再按工程规范实现：
-
-```bash
-openspec list
-openspec validate --all --strict
-```
 
 新增后端模块时参考 [docs/engineering.md](docs/engineering.md) 的分层模板和 [docs/modules/README.md](docs/modules/README.md) 的模块规格入口。
