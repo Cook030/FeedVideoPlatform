@@ -2722,7 +2722,8 @@ function subscribeMessageStream(token, handlers = {}) {
     return () => {};
   }
 
-  const source = new window.EventSource(`/api/messages/stream?token=${encodeURIComponent(token)}`);
+  let source = null;
+  let stopped = false;
   let fallbackTimer = null;
 
   function stopFallback() {
@@ -2739,16 +2740,14 @@ function subscribeMessageStream(token, handlers = {}) {
     }
   }
 
-  let readyTimer = window.setTimeout(() => {
-    source.close();
-	startFallback();
-  }, 8000);
+  let readyTimer = null;
+  let reconnectTimer = null;
 
   function handle(type) {
     return (event) => {
       if (type === "ready") {
         window.clearTimeout(readyTimer);
-		stopFallback();
+        stopFallback();
       }
       let payload = null;
       try {
@@ -2762,16 +2761,40 @@ function subscribeMessageStream(token, handlers = {}) {
     };
   }
 
-  source.addEventListener("ready", handle("ready"));
-  source.addEventListener("message", handle("message"));
-  source.addEventListener("unread", handle("unread"));
-  // 断线由 EventSource 自动重连，这里只做通知，不主动关闭连接。
-  source.addEventListener("error", startFallback);
+  function reconnect() {
+    if (stopped || reconnectTimer !== null) return;
+    startFallback();
+    if (source) source.close();
+    source = null;
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      openStream();
+    }, 1000);
+  }
+
+  function openStream() {
+    apiRequest("/api/messages/stream-ticket", { method: "POST", token })
+      .then((data) => {
+        if (stopped) return;
+        if (!data?.ticket) throw new Error("missing stream ticket");
+        source = new window.EventSource(`/api/messages/stream?ticket=${encodeURIComponent(data.ticket)}`);
+        readyTimer = window.setTimeout(reconnect, 8000);
+        source.addEventListener("ready", handle("ready"));
+        source.addEventListener("message", handle("message"));
+        source.addEventListener("unread", handle("unread"));
+        source.addEventListener("error", reconnect);
+      })
+      .catch(reconnect);
+  }
+
+  openStream();
 
   return () => {
-    window.clearTimeout(readyTimer);
-	stopFallback();
-    source.close();
+    stopped = true;
+    if (readyTimer !== null) window.clearTimeout(readyTimer);
+    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+    stopFallback();
+    if (source) source.close();
   };
 }
 

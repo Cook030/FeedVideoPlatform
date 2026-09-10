@@ -9,7 +9,8 @@
 | 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/messages` | 拉取消息列表 | Bearer JWT | 无 |
-| GET | `/api/messages/stream` | SSE 实时推送新消息与未读数 | Bearer JWT（query token） | 无 |
+| POST | `/api/messages/stream-ticket` | 创建一次性 SSE 建连 ticket | Bearer JWT | 无 |
+| GET | `/api/messages/stream` | SSE 实时推送新消息与未读数 | 一次性 query ticket | 无 |
 | GET | `/api/message-stats/unread` | 获取未读数 | Bearer JWT | 无 |
 | PATCH | `/api/messages` | 批量标记已读 | Bearer JWT | 支持 |
 | POST | `/internal/messages` | 消费互动、关注、系统事件并入消息 | 服务鉴权 | 支持 |
@@ -64,7 +65,7 @@
 
 ### 6.1 实时推送
 
-- 端点：`GET /api/messages/stream?token=<access_token>`，返回 `text/event-stream`。
+- 前端先以 Bearer JWT 调用 `POST /api/messages/stream-ticket`，再使用 `GET /api/messages/stream?ticket=<one_time_ticket>` 建连；ticket 仅能使用一次，30 秒后过期。
 - 事件：`ready`（含初始未读数）、`message`（新消息 + 未读数）、`unread`（未读数变更）；心跳为 `: ping` 注释帧。
 - 扇出：API 实例把变更发布到 Redis 频道 `gcfeed:msg:user:{userID}`，各实例订阅后只投递本机 `Hub` 持有的连接，因此支持 API 多实例水平扩展。
 - 降级：未读数未知（`unread_count < 0`）或 SSE 不可用时，前端回退到 `GET /api/message-stats/unread` 拉取；消息本身以 DB 为准，SSE 只做实时提示。

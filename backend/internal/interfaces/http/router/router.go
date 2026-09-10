@@ -109,11 +109,7 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 	messageService := applicationmessage.New(messageRepo, messageOptions...)
 	messageHandler := interfaceshttpmessage.New(messageService)
 	messageHub := interfaceshttpmessage.NewHub()
-	var messageStreamReady func() bool
-	if messageStream != nil {
-		messageStreamReady = messageStream.Ready
-	}
-	messageStreamHandler := interfaceshttpmessage.NewStreamHandler(messageService, messageHub, messageStreamReady)
+	messageStreamHandler := interfaceshttpmessage.NewStreamHandler(messageService, messageHub, messageStream)
 	if messageStream != nil {
 		// 订阅全部用户频道，把事件投递给本实例持有的 SSE 连接。
 		go func() {
@@ -210,8 +206,8 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 	// 删除评论只需要评论自身 ID，所以放在顶层 comments 资源下。
 	api.DELETE("/comments/:commentId", authMiddleware, interactionHandler.DeleteComment)
 	api.GET("/messages", authMiddleware, messageHandler.List)
-	// SSE 长连接无法携带请求头，使用单独的 query token 鉴权中间件。
-	api.GET("/messages/stream", interfaceshttpmiddleware.NewSSEAuth(jwtManager), messageStreamHandler.Stream)
+	api.POST("/messages/stream-ticket", authMiddleware, messageStreamHandler.Ticket)
+	api.GET("/messages/stream", messageStreamHandler.Stream)
 	api.PATCH("/messages", authMiddleware, messageHandler.MarkRead)
 	api.GET("/message-stats/unread", authMiddleware, messageHandler.CountUnread)
 	api.GET("/playback-config", authMiddleware, playbackHandler.GetConfig)

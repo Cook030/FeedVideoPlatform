@@ -2,8 +2,8 @@ package interfaceshttpmessage
 
 import (
 	applicationmessage "GCFeed/internal/application/message"
+	infracache "GCFeed/internal/infra/cache"
 	inframetrics "GCFeed/internal/infra/metrics"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -186,22 +186,37 @@ func (h *Hub) OnEvent(userID int64, eventType string, data []byte) {
 type StreamHandler struct {
 	service *applicationmessage.Service
 	hub     *Hub
-	ready   func() bool
+	stream  *infracache.MessageStream
 }
 
 // NewStreamHandler 注入消息服务与连接注册表。
-func NewStreamHandler(service *applicationmessage.Service, hub *Hub, ready func() bool) *StreamHandler {
-	return &StreamHandler{service: service, hub: hub, ready: ready}
+func NewStreamHandler(service *applicationmessage.Service, hub *Hub, stream *infracache.MessageStream) *StreamHandler {
+	return &StreamHandler{service: service, hub: hub, stream: stream}
+}
+
+// Ticket 使用现有 Bearer JWT 换取一次性 SSE ticket。
+func (h *StreamHandler) Ticket(c *gin.Context) {
+	userID, ok := userIDFromContext(c)
+	if !ok || h.stream == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "message stream is unavailable"})
+		return
+	}
+	ticket, err := h.stream.IssueTicket(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "message stream is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ticket": ticket})
 }
 
 // Stream 建立 SSE 长连接，推送新消息和未读数变更事件。
 func (h *StreamHandler) Stream(c *gin.Context) {
-	if h.ready == nil || !h.ready() {
+	if h.stream == nil || !h.stream.Ready() {
 		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"message": "message stream is unavailable"})
 		return
 	}
-	userID, ok := userIDFromContext(c)
-	if !ok {
+	userID, err := h.stream.ConsumeTicket(c.Request.Context(), c.Query("ticket"))
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "invalid access token"})
 		return
 	}
@@ -226,18 +241,9 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 	defer ticker.Stop()
 
 	ctx := c.Request.Context()
-	expiresAt, ok := c.Get(interfaceshttpmiddleware.ContextTokenExpiresAtKey)
-	expiresAtUnix, ok := expiresAt.(int64)
-	if !ok || expiresAtUnix <= 0 {
-		return
-	}
-	expiry := time.NewTimer(time.Until(time.Unix(expiresAtUnix, 0)))
-	defer expiry.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-expiry.C:
 			return
 		case event, open := <-client.ch:
 			if !open {

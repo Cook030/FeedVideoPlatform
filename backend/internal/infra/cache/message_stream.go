@@ -4,7 +4,10 @@ import (
 	applicationmessage "GCFeed/internal/application/message"
 	infraconfig "GCFeed/internal/infra/config"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -15,6 +18,10 @@ import (
 
 // messageStreamChannelPrefix 是接收用户专属的 Pub/Sub 频道前缀，后缀为 userID。
 const messageStreamChannelPrefix = "gcfeed:msg:user:"
+const messageStreamTicketPrefix = "gcfeed:msg:ticket:"
+const messageStreamTicketTTL = 30 * time.Second
+
+var ErrMessageStreamUnavailable = errors.New("message stream is unavailable")
 
 // streamEnvelope 是频道内传输的统一信封，Type 决定客户端如何处理 Data。
 type streamEnvelope struct {
@@ -32,6 +39,37 @@ type MessageStream struct {
 // Ready 表示 Redis 订阅当前已经建立。
 func (s *MessageStream) Ready() bool {
 	return s != nil && s.ready.Load()
+}
+
+// IssueTicket 创建只能使用一次的短期 SSE 建连凭据。
+func (s *MessageStream) IssueTicket(ctx context.Context, userID int64) (string, error) {
+	if !s.Ready() || userID <= 0 {
+		return "", ErrMessageStreamUnavailable
+	}
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	ticket := hex.EncodeToString(bytes)
+	if err := s.client.SetArgs(ctx, messageStreamTicketPrefix+ticket, strconv.FormatInt(userID, 10), redis.SetArgs{Mode: "NX", TTL: messageStreamTicketTTL}).Err(); err != nil {
+		return "", err
+	}
+	return ticket, nil
+}
+
+// ConsumeTicket 原子消费 SSE ticket，避免 URL 中的短期凭据被重复使用。
+func (s *MessageStream) ConsumeTicket(ctx context.Context, ticket string) (int64, error) {
+	if !s.Ready() {
+		return 0, ErrMessageStreamUnavailable
+	}
+	userID, err := s.client.GetDel(ctx, messageStreamTicketPrefix+strings.TrimSpace(ticket)).Int64()
+	if err != nil {
+		return 0, err
+	}
+	if userID <= 0 {
+		return 0, redis.Nil
+	}
+	return userID, nil
 }
 
 // NewMessageStream 创建消息实时通道。这里使用独立的 Redis 客户端，
