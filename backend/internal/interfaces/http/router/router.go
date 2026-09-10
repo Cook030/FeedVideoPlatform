@@ -167,13 +167,14 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 
 	// RESTful 路由约定：路径表达资源，HTTP 方法表达动作。
 	// 会话资源用于登录态：创建会话表示登录，删除当前会话表示登出。
+	// 登录与注册对匿名请求开放且成本较高，按 IP 限流以减少爆破和灌水。
 	sessions := api.Group("/sessions")
-	sessions.POST("", accountHandler.Login)
+	sessions.POST("", interfaceshttpmiddleware.NewLoginRateLimit(), accountHandler.Login)
 	sessions.DELETE("/current", authMiddleware, accountHandler.Logout)
 
 	// 用户资源承载注册、当前用户资料和用户作品列表。
 	users := api.Group("/users")
-	users.POST("", accountHandler.Register)
+	users.POST("", interfaceshttpmiddleware.NewRegisterRateLimit(), accountHandler.Register)
 	users.GET("/me", authMiddleware, accountHandler.Me)
 	users.PATCH("/me", authMiddleware, accountHandler.UpdateMe)
 	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)
