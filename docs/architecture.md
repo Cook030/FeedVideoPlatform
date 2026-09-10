@@ -68,7 +68,7 @@ config:
     clusterBorder: "#CBD5E1"
 ---
 flowchart LR
-  %% Internal layering in apps/api
+  %% Internal layering in backend
   classDef entry fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1px;
   classDef http fill:#DBEAFE,stroke:#3B82F6,color:#0F172A,stroke-width:1px;
   classDef service fill:#DCFCE7,stroke:#22C55E,color:#0F172A,stroke-width:1px;

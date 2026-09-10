@@ -16,10 +16,10 @@
 ## 2. 实现结构
 
 ```text
-apps/api/internal/domain/interaction/
-apps/api/internal/application/interaction/
-apps/api/internal/infra/persistence/interaction/
-apps/api/internal/interfaces/http/interaction/
+backend/internal/domain/interaction/
+backend/internal/application/interaction/
+backend/internal/infra/persistence/interaction/
+backend/internal/interfaces/http/interaction/
 ```
 
 ## 3. 接口设计

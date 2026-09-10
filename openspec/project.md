@@ -16,7 +16,7 @@ GCFeed is a short-video Feed system. It provides a practical engineering baselin
 
 ## Architecture
 
-Backend code lives in `apps/api` and follows four layers:
+Backend code lives in `backend` and follows four layers:
 
 - `domain/{module}`: entities, business invariants, domain errors, repository interfaces.
 - `application/{module}`: use cases, cursors, idempotency, cross-entity workflows.
@@ -45,7 +45,7 @@ Config -> DB/Redis/RabbitMQ/JWT -> Repository -> Service -> Handler -> Router
 - New backend modules follow Domain -> Application -> Infrastructure -> Interfaces.
 - New APIs use REST resource paths and cursor pagination for lists.
 - Write APIs use `Idempotency-Key` when repeat submission is realistic.
-- API tests live under `apps/api/test`.
+- API tests live under `backend/test`.
 - Web changes should preserve the current React/Vite structure unless page growth requires a split.
 - Documentation updates are part of feature delivery.
 
@@ -55,6 +55,6 @@ Use these checks when relevant:
 
 ```bash
 openspec validate --all --strict
-cd apps/api && go test ./...
-cd apps/web && npm run build
+cd backend && go test ./...
+cd frontend && npm run build
 ```

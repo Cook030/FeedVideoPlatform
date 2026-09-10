@@ -752,7 +752,7 @@
 
 1. 项目里有哪些 API 流程测试？
 
-   答：项目测试覆盖 account、feed、recommendation、exposure、interaction、message、relation、playback、upload、video 等核心模块。还有 fanout worker、embedding worker、上传 Range、Feed cache 和 hash ngram 的测试。测试集中在 `apps/api/test` 和模块内部 test 文件。
+   答：项目测试覆盖 account、feed、recommendation、exposure、interaction、message、relation、playback、upload、video 等核心模块。还有 fanout worker、embedding worker、上传 Range、Feed cache 和 hash ngram 的测试。测试集中在 `backend/test` 和模块内部 test 文件。
 
 2. Feed API 测试应该覆盖哪些场景？
 
@@ -814,7 +814,7 @@
 
 5. Web 生产构建如何验证？
 
-   答：运行 `npm --prefix apps/web run build` 生成生产产物。验证构建成功后，再通过 Docker Compose 或 Nginx 容器访问 Web 页面。还应检查 API 地址配置、静态资源加载和主要页面交互。
+   答：运行 `npm --prefix frontend run build` 生成生产产物。验证构建成功后，再通过 Docker Compose 或 Nginx 容器访问 Web 页面。还应检查 API 地址配置、静态资源加载和主要页面交互。
 
 ### 追问
 

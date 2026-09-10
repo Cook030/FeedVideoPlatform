@@ -45,7 +45,7 @@ services:
 
   api:
     build:
-      context: ./api
+      context: ./backend
       dockerfile: Dockerfile
     container_name: gcfeed-api
     depends_on:
@@ -58,7 +58,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./api/configs/config.docker.yaml:/app/configs/config.yaml:ro
+      - ./backend/configs/config.docker.yaml:/app/configs/config.yaml:ro
       - api_uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
@@ -69,7 +69,7 @@ services:
 
   worker:
     build:
-      context: ./api
+      context: ./backend
       dockerfile: Dockerfile
     container_name: gcfeed-worker
     command: ["./gcfeed-worker"]
@@ -81,11 +81,11 @@ services:
       rabbitmq:
         condition: service_healthy
     volumes:
-      - ./api/configs/config.docker.yaml:/app/configs/config.yaml:ro
+      - ./backend/configs/config.docker.yaml:/app/configs/config.yaml:ro
 
   web:
     build:
-      context: ./web
+      context: ./frontend
       dockerfile: Dockerfile
     container_name: gcfeed-web
     depends_on:

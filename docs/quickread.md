@@ -17,10 +17,10 @@ GCFeed 是一个短视频 Feed 系统。你可以把它理解成四条主线：
 
 ## 2. 先看目录分层
 
-后端代码集中在 `apps/api`：
+后端代码集中在 `backend`：
 
 ```text
-apps/api/
+backend/
   cmd/feed/main.go                 # 服务启动入口
   configs/                         # 配置文件
   internal/
@@ -48,10 +48,10 @@ apps/api/
 
 阅读顺序：
 
-1. `apps/api/cmd/feed/main.go`
-2. `apps/api/internal/infra/config`
-3. `apps/api/internal/infra/database`
-4. `apps/api/internal/interfaces/http/router/router.go`
+1. `backend/cmd/feed/main.go`
+2. `backend/internal/infra/config`
+3. `backend/internal/infra/database`
+4. `backend/internal/interfaces/http/router/router.go`
 
 重点看 `router.Register`。它把 GORM 仓储、Redis 缓存、RabbitMQ、JWT、各模块 Service 和 Handler 组装到一起。
 
@@ -220,7 +220,7 @@ routing key: interaction.action_changed
 
 ## 5. 用测试理解代码
 
-`apps/api/test` 是很好的代码阅读入口。测试里用内存仓储搭出真实接口流程，可以快速理解每个模块的行为。
+`backend/test` 是很好的代码阅读入口。测试里用内存仓储搭出真实接口流程，可以快速理解每个模块的行为。
 
 推荐阅读顺序：
 
@@ -235,7 +235,7 @@ routing key: interaction.action_changed
 运行测试：
 
 ```bash
-cd apps/api
+cd backend
 go test ./...
 ```
 
@@ -245,15 +245,15 @@ go test ./...
 
 | 目标 | 入口文件 |
 | --- | --- |
-| 看服务启动 | `apps/api/cmd/feed/main.go` |
-| 看所有路由 | `apps/api/internal/interfaces/http/router/router.go` |
-| 看配置结构 | `apps/api/internal/infra/config/entity.go` |
-| 看数据库连接 | `apps/api/internal/infra/database` |
-| 看 JWT | `apps/api/internal/infra/jwt` |
-| 看 Redis 缓存 | `apps/api/internal/infra/cache/feed_cache.go` |
-| 看 RabbitMQ | `apps/api/internal/infra/mq/rabbitmq.go` |
-| 看数据库模型 | `apps/api/internal/infra/persistence/*/model.go` |
-| 看 API 测试 | `apps/api/test/*_api_test.go` |
+| 看服务启动 | `backend/cmd/feed/main.go` |
+| 看所有路由 | `backend/internal/interfaces/http/router/router.go` |
+| 看配置结构 | `backend/internal/infra/config/entity.go` |
+| 看数据库连接 | `backend/internal/infra/database` |
+| 看 JWT | `backend/internal/infra/jwt` |
+| 看 Redis 缓存 | `backend/internal/infra/cache/feed_cache.go` |
+| 看 RabbitMQ | `backend/internal/infra/mq/rabbitmq.go` |
+| 看数据库模型 | `backend/internal/infra/persistence/*/model.go` |
+| 看 API 测试 | `backend/test/*_api_test.go` |
 
 ## 7. 读模块时的固定方法
 
@@ -278,15 +278,14 @@ go test ./...
 | Redis 缓存 | `infra/cache/feed_cache.go` | Feed 页、卡片、计数、热榜如何缓存 |
 | RabbitMQ | `infra/mq/rabbitmq.go` | 事件如何发布、消费、确认 |
 | Worker | `application/interaction/worker.go` | 异步事件如何落库 |
-| 测试替身 | `apps/api/test` | 内存仓储如何模拟真实行为 |
+| 测试替身 | `backend/test` | 内存仓储如何模拟真实行为 |
 
 ## 9. 运行项目后怎么验证理解
 
 启动：
 
 ```bash
-cd apps
-docker compose up -d --build
+make up
 ```
 
 健康检查：

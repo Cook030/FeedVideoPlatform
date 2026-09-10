@@ -16,10 +16,10 @@
 
 ## 2. 后端分层
 
-后端位于 `apps/api`，采用四层结构：
+后端位于 `backend`，采用四层结构：
 
 ```text
-apps/api/
+backend/
   cmd/feed/main.go
   cmd/worker/main.go
   configs/
@@ -52,15 +52,15 @@ apps/api/
 ## 3. 新增后端模块文件组
 
 ```text
-apps/api/internal/domain/{module}/entity.go
-apps/api/internal/domain/{module}/errors.go
-apps/api/internal/domain/{module}/repository.go
-apps/api/internal/application/{module}/service.go
-apps/api/internal/infra/persistence/{module}/model.go
-apps/api/internal/infra/persistence/{module}/gorm.go
-apps/api/internal/interfaces/http/{module}/dto.go
-apps/api/internal/interfaces/http/{module}/handler.go
-apps/api/test/{module}_api_test.go
+backend/internal/domain/{module}/entity.go
+backend/internal/domain/{module}/errors.go
+backend/internal/domain/{module}/repository.go
+backend/internal/application/{module}/service.go
+backend/internal/infra/persistence/{module}/model.go
+backend/internal/infra/persistence/{module}/gorm.go
+backend/internal/interfaces/http/{module}/dto.go
+backend/internal/interfaces/http/{module}/handler.go
+backend/test/{module}_api_test.go
 docs/modules/{module}.md
 ```
 
@@ -282,12 +282,12 @@ HTTP 层使用 `errors.Is` 映射状态码。响应保持简洁：
 
 ## 13. 前端规范
 
-前端位于 `apps/web`，当前保持轻量结构：
+前端位于 `frontend`，当前保持轻量结构：
 
 ```text
-apps/web/src/App.jsx
-apps/web/src/main.jsx
-apps/web/src/styles.css
+frontend/src/App.jsx
+frontend/src/main.jsx
+frontend/src/styles.css
 ```
 
 规则：
@@ -301,7 +301,7 @@ apps/web/src/styles.css
 
 ## 14. 测试规范
 
-后端测试位于 `apps/api/test`。新增接口至少覆盖：
+后端测试位于 `backend/test`。新增接口至少覆盖：
 
 - 成功路径。
 - 参数错误。
@@ -313,14 +313,14 @@ apps/web/src/styles.css
 常用命令：
 
 ```bash
-cd apps/api
+cd backend
 go test ./...
 ```
 
 Web 构建命令：
 
 ```bash
-cd apps/web
+cd frontend
 npm run build
 ```
 

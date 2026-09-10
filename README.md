@@ -32,39 +32,34 @@ GCFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API �
 - Docker
 - Docker Compose
 
-启动：
+启动（前台）：
 
 ```bash
-cd apps
 docker compose up --build
 ```
 
 后台启动：
 
 ```bash
-cd apps
-docker compose up -d --build
+make up
 ```
 
 查看日志：
 
 ```bash
-cd apps
-docker compose logs -f api web
+make logs
 ```
 
 停止：
 
 ```bash
-cd apps
-docker compose down
+make down
 ```
 
 清理数据库、Redis 和上传文件数据卷：
 
 ```bash
-cd apps
-docker compose down -v
+make clean
 ```
 
 服务地址：
@@ -80,10 +75,17 @@ docker compose down -v
 | Prometheus | `http://127.0.0.1:9090` |
 | Grafana 面板 | `http://127.0.0.1:3000/d/gcfeed-overview/gcfeed-overview` |
 
-### 本地开发
+### 常用命令
+
+统一入口是仓库根目录的 `Makefile`：
 
 ```bash
-./scripts/start.sh
+make help        # 查看全部命令
+make up          # 一键启动全栈（后台）
+make logs        # 跟踪 api / web / worker 日志
+make down        # 停止
+make test        # 后端测试
+make build-web   # 前端生产构建
 ```
 
 默认地址：
@@ -100,20 +102,18 @@ docker compose down -v
 后端测试：
 
 ```bash
-cd apps/api
-go test ./...
+make test
 ```
 
 前端生产构建：
 
 ```bash
-npm --prefix apps/web run build
+make build-web
 ```
 
 Compose 配置校验：
 
 ```bash
-cd apps
 docker compose config
 ```
 
@@ -128,8 +128,7 @@ docker compose config
 Docker Compose 会启动 Prometheus 和 Grafana：
 
 ```bash
-cd apps
-docker compose up -d --build
+make up
 ```
 
 Grafana 默认账号密码：

@@ -13,8 +13,7 @@ brew install k6
 启动项目：
 
 ```bash
-cd /Users/sealos/repositories/GCFeed/apps
-docker compose up -d --build
+make up
 ```
 
 确认 API 正常：
