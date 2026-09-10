@@ -290,13 +290,13 @@ func (c *memoryFeedCache) ListHotWindowPage(ctx context.Context, windowEnd time.
 	return items[offset:end], nil
 }
 
-func (c *memoryFeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, authorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error) {
+func (c *memoryFeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, pullAuthorIDs []int64, followedAuthorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	items := make([]*domainfeed.FeedPageItem, 0)
 	items = append(items, cloneFeedPageItems(c.followingInbox[viewerID])...)
-	for _, authorID := range authorIDs {
+	for _, authorID := range pullAuthorIDs {
 		items = append(items, cloneFeedPageItems(c.authorOutbox[authorID])...)
 	}
 	if len(items) == 0 {
@@ -399,6 +399,20 @@ func (r *memoryFeedRepo) ListFollowingPullAuthorIDs(ctx context.Context, viewerI
 		if r.followerCounts[authorID] < domainfeed.BigCreatorFollowerThreshold {
 			continue
 		}
+		authors = append(authors, authorID)
+	}
+	sort.Slice(authors, func(i, j int) bool {
+		return authors[i] < authors[j]
+	})
+	return authors, nil
+}
+
+func (r *memoryFeedRepo) ListFollowingAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	authors := make([]int64, 0, len(r.following[viewerID]))
+	for authorID := range r.following[viewerID] {
 		authors = append(authors, authorID)
 	}
 	sort.Slice(authors, func(i, j int) bool {

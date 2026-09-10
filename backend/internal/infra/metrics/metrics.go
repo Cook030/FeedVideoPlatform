@@ -108,6 +108,22 @@ var (
 		[]string{"step", "result"},
 	)
 
+	SSEConnections = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "gcfeed",
+			Name:      "sse_connections",
+			Help:      "Current number of SSE connections held by this instance.",
+		},
+	)
+
+	SSEDispatchDroppedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "gcfeed",
+			Name:      "sse_dispatch_dropped_total",
+			Help:      "Total SSE connections dropped because the client buffer was full.",
+		},
+	)
+
 	WorkerJobsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "gcfeed",
@@ -142,7 +158,22 @@ func init() {
 		VideoProcessingDuration,
 		WorkerJobsTotal,
 		WorkerJobDuration,
+		SSEConnections,
+		SSEDispatchDroppedTotal,
 	)
+}
+
+// ObserveSSEConnection 在 SSE 连接建立或断开时调整当前连接数。
+func ObserveSSEConnection(delta int) {
+	if delta == 0 {
+		return
+	}
+	SSEConnections.Add(float64(delta))
+}
+
+// ObserveSSEDispatchDropped 记录一次因客户端消费过慢被断开的投递。
+func ObserveSSEDispatchDropped() {
+	SSEDispatchDroppedTotal.Inc()
 }
 
 // HTTPMiddleware records request count and latency with stable route labels.

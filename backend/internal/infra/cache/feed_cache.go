@@ -19,7 +19,7 @@ import (
 
 const hotWindowMinutes = 60
 const hotMinuteBucketTTL = 2 * time.Hour
-const hotWindowCacheTTL = 2 * time.Minute
+const hotWindowCacheTTL = 15 * time.Second
 const actionStateTTL = 30 * 24 * time.Hour
 const actionStatTTL = 24 * time.Hour
 const actionStatJSONTTL = 15 * time.Second
@@ -134,6 +134,12 @@ func (c *FeedCache) SetCards(ctx context.Context, cards map[int64]*domainfeed.Fe
 			return err
 		}
 		pipe.Set(ctx, feedCardKey(card.VideoID), content, ttl)
+		if card.AuthorID > 0 {
+			// 维护作者到视频的索引，资料变更时可以按作者批量失效卡片。
+			authorKey := feedAuthorCardKey(card.AuthorID)
+			pipe.SAdd(ctx, authorKey, card.VideoID)
+			pipe.Expire(ctx, authorKey, ttl)
+		}
 		queued = true
 	}
 	if !queued {
@@ -141,6 +147,46 @@ func (c *FeedCache) SetCards(ctx context.Context, cards map[int64]*domainfeed.Fe
 	}
 	_, err := pipe.Exec(ctx)
 	inframetrics.ObserveCacheWrite("card", len(cards), err)
+	return err
+}
+
+// DeleteCards 删除指定视频的卡片缓存，用于视频删除后立即失效。
+func (c *FeedCache) DeleteCards(ctx context.Context, videoIDs []int64) error {
+	keys := make([]string, 0, len(videoIDs))
+	for _, videoID := range videoIDs {
+		if videoID > 0 {
+			keys = append(keys, feedCardKey(videoID))
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	err := c.client.Del(ctx, keys...).Err()
+	inframetrics.ObserveCacheWrite("card", len(keys), err)
+	return err
+}
+
+// DeleteAuthorCards 按作者维度删除卡片缓存，用于昵称、头像等资料变更后立即失效。
+func (c *FeedCache) DeleteAuthorCards(ctx context.Context, authorID int64) error {
+	if authorID <= 0 {
+		return nil
+	}
+	authorKey := feedAuthorCardKey(authorID)
+	members, err := c.client.SMembers(ctx, authorKey).Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	keys := make([]string, 0, len(members)+1)
+	keys = append(keys, authorKey)
+	for _, member := range members {
+		videoID, parseErr := strconv.ParseInt(member, 10, 64)
+		if parseErr != nil || videoID <= 0 {
+			continue
+		}
+		keys = append(keys, feedCardKey(videoID))
+	}
+	err = c.client.Del(ctx, keys...).Err()
+	inframetrics.ObserveCacheWrite("card", len(keys), err)
 	return err
 }
 
@@ -238,6 +284,26 @@ func videoStatToFeedStat(stat *domaininteraction.VideoStat) *domainfeed.FeedStat
 	}
 }
 
+// ReconcileActionStat 用数据库权威计数重置基数并清空分片增量，让 Redis 计数周期性收敛回真实值。
+func (c *FeedCache) ReconcileActionStat(ctx context.Context, stat *domaininteraction.VideoStat) error {
+	if stat == nil || stat.VideoID <= 0 {
+		return nil
+	}
+	counterBaseKey := interactionStatCounterBaseKey(stat.VideoID)
+	pipe := c.client.Pipeline()
+	pipe.HSet(ctx, counterBaseKey, map[string]any{
+		"like_count":     stat.LikeCount,
+		"comment_count":  stat.CommentCount,
+		"favorite_count": stat.FavoriteCount,
+	})
+	pipe.Expire(ctx, counterBaseKey, actionStatTTL)
+	pipe.Del(ctx, interactionStatCounterShardKeys(stat.VideoID)...)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return err
+	}
+	return setActionStatJSON(ctx, c.client, feedStatKey(stat.VideoID), videoStatToFeedStat(stat))
+}
+
 func (c *FeedCache) AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error {
 	if authorID <= 0 || item == nil || item.VideoID <= 0 || item.PublishedAt.IsZero() || len(userIDs) == 0 {
 		return nil
@@ -279,12 +345,37 @@ func (c *FeedCache) AddAuthorOutboxItem(ctx context.Context, authorID int64, ite
 	return err
 }
 
-func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, authorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error) {
+// RemoveInboxAuthor 从用户 inbox 中清理指定作者的条目，用于取关后立即停止展示其视频。
+func (c *FeedCache) RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error {
+	if userID <= 0 || authorID <= 0 {
+		return nil
+	}
+	key := followingInboxKey(userID)
+	members, err := c.client.ZRange(ctx, key, 0, -1).Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	remove := make([]any, 0)
+	for _, member := range members {
+		item, ok := feedPageItemFromFollowingMember(member)
+		if !ok || item.AuthorID != authorID {
+			continue
+		}
+		remove = append(remove, member)
+	}
+	if len(remove) == 0 {
+		return nil
+	}
+	return c.client.ZRem(ctx, key, remove...).Err()
+}
+
+// ListFollowingIndexPage 合并 inbox 和作者 outbox；只有当索引覆盖了全部关注作者时才视为完整，否则回源数据库。
+func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, pullAuthorIDs []int64, followedAuthorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error) {
 	if viewerID <= 0 || limit <= 0 {
 		return []*domainfeed.FeedPageItem{}, false, nil
 	}
 	keys := []string{followingInboxKey(viewerID)}
-	for _, authorID := range authorIDs {
+	for _, authorID := range pullAuthorIDs {
 		if authorID > 0 {
 			keys = append(keys, followingAuthorOutboxKey(authorID))
 		}
@@ -310,24 +401,36 @@ func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, 
 		return nil, false, err
 	}
 
-	hasIndex := false
+	counts := make([]int64, 0, len(cardinalityCommands))
 	for _, cmd := range cardinalityCommands {
 		count, err := cmd.Result()
 		if err != nil && err != redis.Nil {
 			return nil, false, err
 		}
+		counts = append(counts, count)
+	}
+
+	inboxCount := counts[0]
+	hasOutbox := false
+	for _, count := range counts[1:] {
 		if count > 0 {
-			hasIndex = true
+			hasOutbox = true
 			break
 		}
 	}
-	if !hasIndex {
+	if inboxCount == 0 && !hasOutbox {
+		// 索引完全为空，回源数据库冷启动。
+		return nil, false, nil
+	}
+	if inboxCount == 0 && hasSmallAuthors(followedAuthorIDs, pullAuthorIDs) {
+		// 关注了非大 V 作者却没有任何 inbox 数据，说明索引只落了一部分，不能当作完整结果。
 		return nil, false, nil
 	}
 
+	allowedAuthors := int64Set(followedAuthorIDs)
 	seen := map[int64]struct{}{}
 	items := make([]*domainfeed.FeedPageItem, 0, limit*len(rangeCommands))
-	for commandIndex, cmd := range rangeCommands {
+	for _, cmd := range rangeCommands {
 		members, err := cmd.Result()
 		if err != nil && err != redis.Nil {
 			return nil, false, err
@@ -337,8 +440,7 @@ func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, 
 			if !ok {
 				continue
 			}
-			if commandIndex > 0 && item.AuthorID > 0 {
-				allowedAuthors := int64Set(authorIDs)
+			if item.AuthorID > 0 {
 				if _, followed := allowedAuthors[item.AuthorID]; !followed {
 					continue
 				}
@@ -355,6 +457,20 @@ func (c *FeedCache) ListFollowingIndexPage(ctx context.Context, viewerID int64, 
 		items = items[:limit]
 	}
 	return items, true, nil
+}
+
+// hasSmallAuthors 判断关注列表里是否存在走 inbox 推模式的小作者。
+func hasSmallAuthors(followedAuthorIDs []int64, pullAuthorIDs []int64) bool {
+	if len(followedAuthorIDs) == 0 {
+		return false
+	}
+	pullAuthors := int64Set(pullAuthorIDs)
+	for _, authorID := range followedAuthorIDs {
+		if _, ok := pullAuthors[authorID]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // AddHotScore 把一次互动热度写入 1 分钟粒度的热榜桶。
@@ -703,6 +819,10 @@ func cacheKeys(videoIDs []int64, build func(int64) string) []string {
 
 func feedCardKey(videoID int64) string {
 	return fmt.Sprintf("video:card:v1:%d", videoID)
+}
+
+func feedAuthorCardKey(authorID int64) string {
+	return fmt.Sprintf("video:card:author:v1:%d", authorID)
 }
 
 func feedStatKey(videoID int64) string {

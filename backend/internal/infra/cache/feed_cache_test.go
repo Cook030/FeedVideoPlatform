@@ -181,3 +181,24 @@ func TestActionStatBaseInitUsesInitialStat(t *testing.T) {
 		t.Fatalf("unexpected stat: %+v", stat)
 	}
 }
+
+func TestHasSmallAuthors(t *testing.T) {
+	cases := []struct {
+		name              string
+		followedAuthorIDs []int64
+		pullAuthorIDs     []int64
+		expect            bool
+	}{
+		{"empty following", nil, []int64{1}, false},
+		{"only big creators", []int64{1, 2}, []int64{1, 2}, false},
+		{"with small creator", []int64{1, 3}, []int64{1}, true},
+		{"no pull authors", []int64{3}, nil, true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := hasSmallAuthors(testCase.followedAuthorIDs, testCase.pullAuthorIDs); got != testCase.expect {
+				t.Fatalf("hasSmallAuthors(%v, %v) = %v, expect %v", testCase.followedAuthorIDs, testCase.pullAuthorIDs, got, testCase.expect)
+			}
+		})
+	}
+}

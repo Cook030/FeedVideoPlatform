@@ -11,6 +11,7 @@ import (
 
 const ContextUserIDKey = "auth_user_id"
 const ContextRoleKey = "auth_role"
+const ContextTokenExpiresAtKey = "auth_token_expires_at"
 
 // NewJWTAuth 返回 Gin 鉴权中间件，负责解析 Bearer token 并写入用户上下文。
 func NewJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
@@ -50,6 +51,41 @@ func NewJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
 		// 后续 Handler 从 gin.Context 中读取用户 ID 和角色，避免重复解析 JWT。
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextRoleKey, claims.Role)
+		c.Set(ContextTokenExpiresAtKey, claims.ExpiresAt)
+		c.Next()
+	}
+}
+
+// NewSSEAuth 为 SSE 长连接提供鉴权：浏览器 EventSource 无法设置请求头，
+// 因此优先从 query token 读取，同时兼容标准的 Authorization 头，便于命令行调试。
+func NewSSEAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := strings.TrimSpace(c.Query("token"))
+		if token == "" {
+			if header := strings.TrimSpace(c.GetHeader("Authorization")); header != "" {
+				if parts := strings.SplitN(header, " ", 2); len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
+					token = strings.TrimSpace(parts[1])
+				}
+			}
+		}
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "access token is required",
+			})
+			return
+		}
+
+		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "invalid access token",
+			})
+			return
+		}
+
+		c.Set(ContextUserIDKey, claims.UserID)
+		c.Set(ContextRoleKey, claims.Role)
+		c.Set(ContextTokenExpiresAtKey, claims.ExpiresAt)
 		c.Next()
 	}
 }

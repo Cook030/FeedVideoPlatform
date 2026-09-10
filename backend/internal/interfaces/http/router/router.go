@@ -47,7 +47,7 @@ import (
 )
 
 // Register 负责后端依赖装配：数据库模型、仓储、Service、Handler、中间件和路由。
-func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
+func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	// database/sql 连接池交给 GORM 复用，避免维护两套数据库连接。
 	gormDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
 		Conn: db,
@@ -68,9 +68,6 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	}
 
 	// 下面按领域模块组装依赖：Repository -> Service -> Handler。
-	accountRepo := infraaccount.New(gormDB)
-	accountService := applicationaccount.New(accountRepo, jwtManager)
-	accountHandler := interfaceshttpaccount.New(accountService)
 	videoRepo := infravideo.New(gormDB)
 	feedRepo := infrafeed.New(gormDB)
 	recommendationRepo := infrarecommendation.New(gormDB)
@@ -80,21 +77,56 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	videoOptions := []applicationvideo.Option{}
 	interactionOptions := []applicationinteraction.Option{}
 	exposureOptions := []applicationexposure.Option{}
+	messageOptions := []applicationmessage.Option{}
 	var feedCache *infracache.FeedCache
 	var rabbitMQ *inframq.RabbitMQ
+	var messageStream *infracache.MessageStream
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
+		// 消息实时通道使用独立 Redis 客户端做 Pub/Sub 扇出，支持 API 多实例。
+		messageStream = infracache.NewMessageStream(cfg.Redis)
 		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
+		messageOptions = append(messageOptions, applicationmessage.WithNotifier(messageStream))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
 	}
+	accountRepo := infraaccount.New(gormDB)
+	if feedCache != nil {
+		// 资料变更后失效卡片缓存；视频删除后失效对应卡片缓存。
+		videoOptions = append(videoOptions, applicationvideo.WithCardInvalidator(feedCache))
+	}
+	accountOptions := []applicationaccount.Option{}
+	if feedCache != nil {
+		accountOptions = append(accountOptions, applicationaccount.WithCardInvalidator(feedCache))
+	}
+	accountService := applicationaccount.New(accountRepo, jwtManager, accountOptions...)
+	accountHandler := interfaceshttpaccount.New(accountService)
 	feedService := applicationfeed.New(feedRepo, feedOptions...)
 	feedHandler := interfaceshttpfeed.New(feedService)
 	interactionRepo := infrainteraction.New(gormDB)
 	messageRepo := inframessage.New(gormDB)
-	messageService := applicationmessage.New(messageRepo)
+	messageService := applicationmessage.New(messageRepo, messageOptions...)
 	messageHandler := interfaceshttpmessage.New(messageService)
+	messageHub := interfaceshttpmessage.NewHub()
+	var messageStreamReady func() bool
+	if messageStream != nil {
+		messageStreamReady = messageStream.Ready
+	}
+	messageStreamHandler := interfaceshttpmessage.NewStreamHandler(messageService, messageHub, messageStreamReady)
+	if messageStream != nil {
+		// 订阅全部用户频道，把事件投递给本实例持有的 SSE 连接。
+		go func() {
+			if err := messageStream.Run(ctx, messageHub.OnEvent); err != nil && ctx.Err() == nil {
+				log.Printf("message stream stopped: %v", err)
+			}
+		}()
+		// 进程退出时主动关闭 SSE 连接，让客户端尽快重连到其它实例。
+		go func() {
+			<-ctx.Done()
+			messageHub.Close()
+		}()
+	}
 	playbackRepo := infraplayback.New(gormDB)
 	playbackService := applicationplayback.New(playbackRepo)
 	playbackHandler := interfaceshttpplayback.New(playbackService)
@@ -178,6 +210,8 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	// 删除评论只需要评论自身 ID，所以放在顶层 comments 资源下。
 	api.DELETE("/comments/:commentId", authMiddleware, interactionHandler.DeleteComment)
 	api.GET("/messages", authMiddleware, messageHandler.List)
+	// SSE 长连接无法携带请求头，使用单独的 query token 鉴权中间件。
+	api.GET("/messages/stream", interfaceshttpmiddleware.NewSSEAuth(jwtManager), messageStreamHandler.Stream)
 	api.PATCH("/messages", authMiddleware, messageHandler.MarkRead)
 	api.GET("/message-stats/unread", authMiddleware, messageHandler.CountUnread)
 	api.GET("/playback-config", authMiddleware, playbackHandler.GetConfig)
@@ -217,6 +251,7 @@ type FollowFeedBackfiller struct {
 	}
 	feedCache interface {
 		AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error
+		RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error
 	}
 }
 
@@ -225,6 +260,7 @@ func NewFollowFeedBackfiller(feedRepo interface {
 	ListAuthorRecentVideos(ctx context.Context, authorID int64, limit int) ([]*domainfeed.FeedPageItem, error)
 }, feedCache interface {
 	AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error
+	RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error
 }) *FollowFeedBackfiller {
 	return &FollowFeedBackfiller{feedRepo: feedRepo, feedCache: feedCache}
 }
@@ -239,6 +275,10 @@ func (b *FollowFeedBackfiller) ListAuthorRecentVideos(ctx context.Context, autho
 
 func (b *FollowFeedBackfiller) AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error {
 	return b.feedCache.AddInboxItems(ctx, authorID, userIDs, item, maxLen)
+}
+
+func (b *FollowFeedBackfiller) RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error {
+	return b.feedCache.RemoveInboxAuthor(ctx, userID, authorID)
 }
 
 // HealthCheck 提供基础健康检查接口，方便本地调试和容器探活。

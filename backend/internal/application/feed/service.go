@@ -73,7 +73,7 @@ type FeedCache interface {
 }
 
 type FollowingIndexCache interface {
-	ListFollowingIndexPage(ctx context.Context, viewerID int64, authorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error)
+	ListFollowingIndexPage(ctx context.Context, viewerID int64, pullAuthorIDs []int64, followedAuthorIDs []int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, bool, error)
 }
 
 // Strategy 定义单个 Feed 场景的读取策略。
@@ -467,11 +467,15 @@ func (s *FollowingStrategy) listPageFromRepo(ctx context.Context, viewerID int64
 
 func (s *FollowingStrategy) listFollowingItems(ctx context.Context, viewerID int64, parsedCursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	if s.followingIndex != nil {
-		authorIDs, err := s.repo.ListFollowingPullAuthorIDs(ctx, viewerID)
+		pullAuthorIDs, err := s.repo.ListFollowingPullAuthorIDs(ctx, viewerID)
 		if err != nil {
 			return nil, err
 		}
-		items, ok, err := s.followingIndex.ListFollowingIndexPage(ctx, viewerID, authorIDs, parsedCursor, limit)
+		followedAuthorIDs, err := s.repo.ListFollowingAuthorIDs(ctx, viewerID)
+		if err != nil {
+			return nil, err
+		}
+		items, ok, err := s.followingIndex.ListFollowingIndexPage(ctx, viewerID, pullAuthorIDs, followedAuthorIDs, parsedCursor, limit)
 		if err != nil {
 			return nil, err
 		}

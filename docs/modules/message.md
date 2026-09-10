@@ -9,6 +9,7 @@
 | 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/messages` | 拉取消息列表 | Bearer JWT | 无 |
+| GET | `/api/messages/stream` | SSE 实时推送新消息与未读数 | Bearer JWT（query token） | 无 |
 | GET | `/api/message-stats/unread` | 获取未读数 | Bearer JWT | 无 |
 | PATCH | `/api/messages` | 批量标记已读 | Bearer JWT | 支持 |
 | POST | `/internal/messages` | 消费互动、关注、系统事件并入消息 | 服务鉴权 | 支持 |
@@ -56,7 +57,14 @@
 
 | 页面 | 接入能力 |
 | --- | --- |
-| 导航栏 | 展示未读角标 |
-| 消息中心 | 消息列表、筛选、已读状态 |
+| 导航栏 | 展示未读角标，通过 SSE `unread`/`message` 事件实时更新 |
+| 消息中心 | 消息列表、筛选、已读状态，SSE 新消息实时插入列表头部 |
 | Feed 页 | 互动成功后可触发消息链路 |
 | 个人主页 | 关注通知入口 |
+
+### 6.1 实时推送
+
+- 端点：`GET /api/messages/stream?token=<access_token>`，返回 `text/event-stream`。
+- 事件：`ready`（含初始未读数）、`message`（新消息 + 未读数）、`unread`（未读数变更）；心跳为 `: ping` 注释帧。
+- 扇出：API 实例把变更发布到 Redis 频道 `gcfeed:msg:user:{userID}`，各实例订阅后只投递本机 `Hub` 持有的连接，因此支持 API 多实例水平扩展。
+- 降级：未读数未知（`unread_count < 0`）或 SSE 不可用时，前端回退到 `GET /api/message-stats/unread` 拉取；消息本身以 DB 为准，SSE 只做实时提示。

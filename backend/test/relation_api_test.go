@@ -65,6 +65,7 @@ type memoryFollowFeedBackfiller struct {
 	followerCount int
 	items         []*domainfeed.FeedPageItem
 	writes        []backfillWrite
+	removed       []backfillRemoval
 }
 
 type memoryRelationMessageWriter struct {
@@ -88,6 +89,11 @@ type backfillWrite struct {
 	UserIDs  []int64
 	VideoID  int64
 	MaxLen   int64
+}
+
+type backfillRemoval struct {
+	UserID   int64
+	AuthorID int64
 }
 
 func newMemoryRelationRepo() *memoryRelationRepo {
@@ -308,6 +314,28 @@ func TestRelationFollowSkipsBigCreatorInboxBackfill(t *testing.T) {
 	}
 }
 
+// TestRelationUnfollowCleansInbox 覆盖取关后清理旧 inbox，避免已取关作者的视频继续出现。
+func TestRelationUnfollowCleansInbox(t *testing.T) {
+	repo := newMemoryRelationRepo()
+	backfiller := &memoryFollowFeedBackfiller{followerCount: 3}
+	service := applicationrelation.New(repo, applicationrelation.WithFollowFeedBackfiller(backfiller))
+
+	if _, err := service.Follow(context.Background(), 42, 77, "unfollow-clean-follow"); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if len(backfiller.Removals()) != 0 {
+		t.Fatalf("unexpected inbox removal on follow: %+v", backfiller.Removals())
+	}
+
+	if _, err := service.Unfollow(context.Background(), 42, 77, "unfollow-clean-unfollow"); err != nil {
+		t.Fatalf("unfollow: %v", err)
+	}
+	removals := backfiller.Removals()
+	if len(removals) != 1 || removals[0].UserID != 42 || removals[0].AuthorID != 77 {
+		t.Fatalf("unexpected inbox removal: %+v", removals)
+	}
+}
+
 // TestRelationMessageWriter 覆盖关注成功后给被关注用户写消息。
 func TestRelationMessageWriter(t *testing.T) {
 	repo := newMemoryRelationRepo()
@@ -504,6 +532,13 @@ func (b *memoryFollowFeedBackfiller) ListAuthorRecentVideos(ctx context.Context,
 	return items, nil
 }
 
+func (b *memoryFollowFeedBackfiller) RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.removed = append(b.removed, backfillRemoval{UserID: userID, AuthorID: authorID})
+	return nil
+}
+
 func (b *memoryFollowFeedBackfiller) AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -525,6 +560,12 @@ func (b *memoryFollowFeedBackfiller) Writes() []backfillWrite {
 		writes = append(writes, write)
 	}
 	return writes
+}
+
+func (b *memoryFollowFeedBackfiller) Removals() []backfillRemoval {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]backfillRemoval(nil), b.removed...)
 }
 
 func newMemoryRelationMessageWriter() *memoryRelationMessageWriter {

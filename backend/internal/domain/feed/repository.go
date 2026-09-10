@@ -12,6 +12,8 @@ type Repository interface {
 	ListFollowingPage(ctx context.Context, viewerID int64, cursor *TimelineCursor, limit int) ([]*FeedPageItem, error)
 	// ListFollowingPullAuthorIDs 查询当前用户关注的大 V 作者 ID，用于合并 Redis author outbox。
 	ListFollowingPullAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error)
+	// ListFollowingAuthorIDs 查询当前用户关注的全部作者 ID，用于校验索引条目是否仍然有效。
+	ListFollowingAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error)
 	// BatchGetFeedCards 批量读取视频卡片展示字段。
 	BatchGetFeedCards(ctx context.Context, videoIDs []int64) (map[int64]*FeedCard, error)
 	// BatchGetFeedStats 批量读取视频互动计数。

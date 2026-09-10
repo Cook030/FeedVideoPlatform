@@ -11,13 +11,46 @@ import (
 )
 
 const defaultMessageLimit = 20
+const notificationTimeout = time.Second
 
 var ErrLoadMessageFailed = errors.New("failed to load message")
 var ErrSaveMessageFailed = errors.New("failed to save message")
 var ErrUpdateMessageFailed = errors.New("failed to update message")
 
+// UnreadCountUnknown 表示未读数获取失败，客户端应回退到 REST 查询。
+const UnreadCountUnknown = -1
+
+const (
+	NotificationTypeMessage = "message"
+	NotificationTypeUnread  = "unread"
+)
+
 type Service struct {
-	repo domainmessage.Repository
+	repo     domainmessage.Repository
+	notifier Notifier
+}
+
+// Notification 描述一次需要实时下发的消息变更。
+type Notification struct {
+	UserID      int64
+	Type        string
+	Message     *domainmessage.Message
+	UnreadCount int
+}
+
+// Notifier 把消息变更推送到实时通道，属于尽力而为的旁路，失败不影响主流程。
+type Notifier interface {
+	Notify(ctx context.Context, notification Notification) error
+}
+
+// Option 定制 Service 的可选依赖。
+type Option func(*Service)
+
+// WithNotifier 为消息变更启用实时通知。
+func WithNotifier(notifier Notifier) Option {
+	return func(s *Service) {
+		s.notifier = notifier
+	}
 }
 
 type CreateResult struct {
@@ -44,8 +77,14 @@ type cursorPayload struct {
 	MessageID int64  `json:"message_id"`
 }
 
-func New(repo domainmessage.Repository) *Service {
-	return &Service{repo: repo}
+func New(repo domainmessage.Repository, opts ...Option) *Service {
+	service := &Service{repo: repo}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service
 }
 
 // CreateFromEvent 将内部事件转换成用户消息，eventID/idempotencyKey 命中时返回既有消息。
@@ -69,6 +108,10 @@ func (s *Service) CreateFromActorEvent(ctx context.Context, userID int64, messag
 	created, inserted, err := s.repo.Create(ctx, message, idempotencyKey)
 	if err != nil {
 		return nil, ErrSaveMessageFailed
+	}
+	// 仅对真正新增的消息下发实时通知，幂等重放不重复推送。
+	if inserted {
+		s.notifyCreated(ctx, created)
 	}
 	return &CreateResult{Message: created, Created: inserted}, nil
 }
@@ -142,7 +185,53 @@ func (s *Service) MarkRead(ctx context.Context, userID int64, messageIDs []int64
 	if err != nil {
 		return nil, ErrUpdateMessageFailed
 	}
+	// 已读变更会影响其它标签页/设备的未读角标，发生时同步下发。
+	if count > 0 {
+		s.notifyUnread(ctx, userID)
+	}
 	return &MarkReadResult{UpdatedCount: count}, nil
+}
+
+// notifyCreated 下发新消息事件，并携带接收用户的最新未读数。
+func (s *Service) notifyCreated(_ context.Context, message *domainmessage.Message) {
+	if s.notifier == nil || message == nil {
+		return
+	}
+	go func() {
+		notifyCtx, cancel := context.WithTimeout(context.Background(), notificationTimeout)
+		defer cancel()
+		_ = s.notifier.Notify(notifyCtx, Notification{
+			UserID:      message.UserID,
+			Type:        NotificationTypeMessage,
+			Message:     message,
+			UnreadCount: s.currentUnreadCount(notifyCtx, message.UserID),
+		})
+	}()
+}
+
+// notifyUnread 只下发未读数变更，用于标记已读等多端同步场景。
+func (s *Service) notifyUnread(_ context.Context, userID int64) {
+	if s.notifier == nil {
+		return
+	}
+	go func() {
+		notifyCtx, cancel := context.WithTimeout(context.Background(), notificationTimeout)
+		defer cancel()
+		_ = s.notifier.Notify(notifyCtx, Notification{
+			UserID:      userID,
+			Type:        NotificationTypeUnread,
+			UnreadCount: s.currentUnreadCount(notifyCtx, userID),
+		})
+	}()
+}
+
+// currentUnreadCount 查询未读数，失败时返回 UnreadCountUnknown 让客户端回退到 REST。
+func (s *Service) currentUnreadCount(ctx context.Context, userID int64) int {
+	count, err := s.repo.CountUnread(ctx, userID)
+	if err != nil {
+		return UnreadCountUnknown
+	}
+	return count
 }
 
 func normalizeLimit(limit int) int {

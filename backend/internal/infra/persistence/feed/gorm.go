@@ -145,6 +145,19 @@ func (r *Repository) ListFollowingPullAuthorIDs(ctx context.Context, viewerID in
 	return authorIDs, err
 }
 
+// ListFollowingAuthorIDs 查询当前用户关注的全部作者 ID，用于过滤索引中的失效条目。
+func (r *Repository) ListFollowingAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
+	var authorIDs []int64
+	err := r.db.WithContext(ctx).
+		Table("user_follow AS f").
+		Select("f.target_user_id").
+		Where("f.user_id = ? AND f.status = ?", viewerID, domainrelation.FollowStatusActive).
+		Order("f.target_user_id ASC").
+		Scan(&authorIDs).
+		Error
+	return authorIDs, err
+}
+
 func (r *Repository) CountFollowers(ctx context.Context, authorID int64) (int, error) {
 	var count int
 	err := r.db.WithContext(ctx).

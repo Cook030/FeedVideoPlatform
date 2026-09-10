@@ -79,7 +79,7 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	feedCache := infracache.NewFeedCache(redisClient)
 
 	interactionRepo := infrainteraction.New(gormDB)
-	actionWorker := applicationinteraction.NewActionWorker(interactionRepo, rabbitMQ)
+	actionWorker := applicationinteraction.NewActionWorker(interactionRepo, rabbitMQ, feedCache)
 	if err := actionWorker.Start(ctx); err != nil {
 		return err
 	}

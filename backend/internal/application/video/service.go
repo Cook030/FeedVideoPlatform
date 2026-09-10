@@ -12,12 +12,18 @@ var ErrSaveVideoFailed = errors.New("failed to save video")
 var ErrUpdateVideoFailed = errors.New("failed to update video")
 
 type Service struct {
-	repo      domainvideo.Repository
-	publisher PublishedEventPublisher
+	repo            domainvideo.Repository
+	publisher       PublishedEventPublisher
+	cardInvalidator FeedCacheInvalidator
 }
 
 type PublishedEventPublisher interface {
 	PublishVideoPublished(ctx context.Context, event *PublishedEvent) error
+}
+
+// FeedCacheInvalidator 负责在视频删除后主动失效 Feed 卡片缓存。
+type FeedCacheInvalidator interface {
+	DeleteCards(ctx context.Context, videoIDs []int64) error
 }
 
 type Option func(*Service)
@@ -39,6 +45,13 @@ func New(repo domainvideo.Repository, options ...Option) *Service {
 func WithPublishedEventPublisher(publisher PublishedEventPublisher) Option {
 	return func(s *Service) {
 		s.publisher = publisher
+	}
+}
+
+// WithCardInvalidator 在视频删除后失效卡片缓存，避免删除的视频继续出现在 Feed。
+func WithCardInvalidator(invalidator FeedCacheInvalidator) Option {
+	return func(s *Service) {
+		s.cardInvalidator = invalidator
 	}
 }
 
@@ -160,6 +173,9 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 			return domainvideo.ErrVideoNotFound
 		}
 		return ErrUpdateVideoFailed
+	}
+	if s.cardInvalidator != nil {
+		_ = s.cardInvalidator.DeleteCards(ctx, []int64{videoID})
 	}
 	return nil
 }

@@ -32,6 +32,7 @@ type FollowFeedBackfiller interface {
 	CountFollowers(ctx context.Context, authorID int64) (int, error)
 	ListAuthorRecentVideos(ctx context.Context, authorID int64, limit int) ([]*domainfeed.FeedPageItem, error)
 	AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error
+	RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error
 }
 
 type Option func(*Service)
@@ -155,6 +156,10 @@ func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int6
 			return nil, ErrBackfillFollowFeedFailed
 		}
 		s.notifyFollow(ctx, userID, targetUserID)
+	}
+	if !active && s.backfiller != nil {
+		// 取关后清掉历史 inbox，避免已取关作者的视频继续出现在关注流。
+		_ = s.backfiller.RemoveInboxAuthor(ctx, userID, targetUserID)
 	}
 
 	return &FollowResult{

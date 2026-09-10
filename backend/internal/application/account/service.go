@@ -21,9 +21,18 @@ type TokenSigner interface {
 
 // Service 编排账号用例：注册、登录、读取资料、更新资料。
 type Service struct {
-	repo   domainaccount.Repository
-	signer TokenSigner
+	repo            domainaccount.Repository
+	signer          TokenSigner
+	cardInvalidator FeedCacheInvalidator
 }
+
+// FeedCacheInvalidator 负责在资料变更后失效该作者的 Feed 卡片缓存。
+type FeedCacheInvalidator interface {
+	DeleteAuthorCards(ctx context.Context, authorID int64) error
+}
+
+// Option 用于在装配阶段注册账号服务依赖。
+type Option func(*Service)
 
 // LoginResult 是登录成功后返回给 HTTP 层的 token 数据。
 type LoginResult struct {
@@ -46,10 +55,21 @@ type Profile struct {
 	WorkCount      int
 }
 
-func New(repo domainaccount.Repository, signer TokenSigner) *Service {
-	return &Service{
+func New(repo domainaccount.Repository, signer TokenSigner, options ...Option) *Service {
+	service := &Service{
 		repo:   repo,
 		signer: signer,
+	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
+}
+
+// WithCardInvalidator 在资料变更后失效卡片缓存，避免 Feed 继续展示旧昵称和头像。
+func WithCardInvalidator(invalidator FeedCacheInvalidator) Option {
+	return func(s *Service) {
+		s.cardInvalidator = invalidator
 	}
 }
 
@@ -156,6 +176,9 @@ func (s *Service) UpdateProfile(ctx context.Context, userID int64, nickname, ava
 			return nil, domainaccount.ErrUserNotFound
 		}
 		return nil, ErrUpdateAccountFailed
+	}
+	if s.cardInvalidator != nil {
+		_ = s.cardInvalidator.DeleteAuthorCards(ctx, user.ID)
 	}
 
 	return profileFromUser(user), nil

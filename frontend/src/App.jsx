@@ -47,6 +47,7 @@ function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
   const [user, setUser] = useState(() => readStoredUser());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [liveMessage, setLiveMessage] = useState(null);
 
   useEffect(() => {
     const handlePopState = () => setRoute(normalizeRoute(window.location.pathname));
@@ -88,6 +89,37 @@ function App() {
   useEffect(() => {
     refreshUnreadCount();
   }, [refreshUnreadCount, route]);
+
+  // applyUnreadCount 优先使用 SSE 携带的未读数，缺失时回退到 REST 查询。
+  const applyUnreadCount = useCallback(
+    (payload) => {
+      const count = Number(payload?.unread_count);
+      if (Number.isFinite(count) && count >= 0) {
+        setUnreadCount(count);
+        return;
+      }
+      refreshUnreadCount();
+    },
+    [refreshUnreadCount]
+  );
+
+  useEffect(() => {
+    if (!token || !user) {
+      setLiveMessage(null);
+      return undefined;
+    }
+    return subscribeMessageStream(token, {
+      onReady: applyUnreadCount,
+      onUnread: applyUnreadCount,
+      onMessage: (payload) => {
+        applyUnreadCount(payload);
+        if (payload && payload.id) {
+          setLiveMessage(payload);
+        }
+      },
+      onError: refreshUnreadCount
+    });
+  }, [token, user, applyUnreadCount]);
 
   const session = useMemo(
     () => ({
@@ -173,7 +205,12 @@ function App() {
         onNavigate={(path) => navigate(path, setRoute)}
         onLogout={() => logout(session, setRoute)}
       >
-        <MessagesPage session={session} onNavigate={(path) => navigate(path, setRoute)} onUnreadChange={refreshUnreadCount} />
+        <MessagesPage
+          session={session}
+          onNavigate={(path) => navigate(path, setRoute)}
+          onUnreadChange={refreshUnreadCount}
+          liveMessage={liveMessage}
+        />
       </AppShell>
     );
   }
@@ -1339,7 +1376,7 @@ function CommentMessage({ icon, title, action, onAction }) {
   );
 }
 
-function MessagesPage({ session, onNavigate, onUnreadChange }) {
+function MessagesPage({ session, onNavigate, onUnreadChange, liveMessage }) {
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState("");
   const [hasMore, setHasMore] = useState(false);
@@ -1380,6 +1417,12 @@ function MessagesPage({ session, onNavigate, onUnreadChange }) {
   useEffect(() => {
     loadMessages("", false);
   }, [loadMessages]);
+
+  // 收到 SSE 实时消息时插入列表头部，避免整页重新拉取。
+  useEffect(() => {
+    if (!liveMessage || !liveMessage.id) return;
+    setItems((current) => prependMessage(current, liveMessage));
+  }, [liveMessage]);
 
   async function markMessageRead(message) {
     if (!message || message.is_read || busyID || markingAll) return;
@@ -2388,6 +2431,12 @@ function appendMessages(currentItems, nextItems) {
   return merged;
 }
 
+function prependMessage(currentItems, message) {
+  if (!message || !message.id) return currentItems;
+  if (currentItems.some((item) => item.id === message.id)) return currentItems;
+  return [message, ...currentItems];
+}
+
 function viewerActionMap(items, field) {
   const map = {};
   for (const item of items) {
@@ -2664,6 +2713,66 @@ async function apiRequest(path, options = {}) {
 
   if (response.status === 204) return null;
   return response.json();
+}
+
+// subscribeMessageStream 建立 SSE 长连接，返回关闭函数用于清理。
+// ready 超时未到达时判定为鉴权失败或链路不可用，关闭并触发降级回退。
+function subscribeMessageStream(token, handlers = {}) {
+  if (!token || typeof window === "undefined" || typeof window.EventSource !== "function") {
+    return () => {};
+  }
+
+  const source = new window.EventSource(`/api/messages/stream?token=${encodeURIComponent(token)}`);
+  let fallbackTimer = null;
+
+  function stopFallback() {
+    if (fallbackTimer !== null) {
+      window.clearInterval(fallbackTimer);
+      fallbackTimer = null;
+    }
+  }
+
+  function startFallback() {
+    handlers.onError?.();
+    if (fallbackTimer === null) {
+      fallbackTimer = window.setInterval(() => handlers.onError?.(), 30000);
+    }
+  }
+
+  let readyTimer = window.setTimeout(() => {
+    source.close();
+	startFallback();
+  }, 8000);
+
+  function handle(type) {
+    return (event) => {
+      if (type === "ready") {
+        window.clearTimeout(readyTimer);
+		stopFallback();
+      }
+      let payload = null;
+      try {
+        payload = event.data ? JSON.parse(event.data) : null;
+      } catch {
+        payload = null;
+      }
+      if (type === "ready") handlers.onReady?.(payload);
+      else if (type === "message") handlers.onMessage?.(payload);
+      else if (type === "unread") handlers.onUnread?.(payload);
+    };
+  }
+
+  source.addEventListener("ready", handle("ready"));
+  source.addEventListener("message", handle("message"));
+  source.addEventListener("unread", handle("unread"));
+  // 断线由 EventSource 自动重连，这里只做通知，不主动关闭连接。
+  source.addEventListener("error", startFallback);
+
+  return () => {
+    window.clearTimeout(readyTimer);
+	stopFallback();
+    source.close();
+  };
 }
 
 async function uploadFile(file, kind, token) {
