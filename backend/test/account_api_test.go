@@ -11,6 +11,7 @@ import (
 
 	applicationaccount "GCFeed/internal/application/account"
 	domainaccount "GCFeed/internal/domain/account"
+	infracrypto "GCFeed/internal/infra/crypto"
 	infrajwt "GCFeed/internal/infra/jwt"
 	interfaceshttpaccount "GCFeed/internal/interfaces/http/account"
 	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
@@ -325,7 +326,7 @@ func newAccountRouterWithRepo(t *testing.T) (*gin.Engine, *memoryAccountRepo) {
 		t.Fatalf("new jwt manager: %v", err)
 	}
 	repo := newMemoryAccountRepo()
-	service := applicationaccount.New(repo, jwtManager)
+	service := applicationaccount.New(repo, jwtManager, infracrypto.NewBcryptHasher())
 	handler := interfaceshttpaccount.New(service)
 	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
 

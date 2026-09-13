@@ -9,6 +9,7 @@ import (
 	applicationembedding "GCFeed/internal/application/embedding"
 	applicationvideo "GCFeed/internal/application/video"
 	domainembedding "GCFeed/internal/domain/embedding"
+	infravector "GCFeed/internal/infra/embedding"
 )
 
 type memoryVideoEmbeddingRepo struct {
@@ -34,7 +35,7 @@ func (r *memoryVideoEmbeddingRepo) FindVideoEmbedding(ctx context.Context, video
 
 func TestVideoEmbeddingWorkerWritesEmbedding(t *testing.T) {
 	repo := newMemoryVideoEmbeddingRepo()
-	service := applicationembedding.New(repo, domainembedding.NewHashNgramVectorizer())
+	service := applicationembedding.New(repo, infravector.NewHashNgramVectorizer())
 	worker := applicationembedding.NewVideoEmbeddingWorker(service, nil)
 
 	event := &applicationvideo.PublishedEvent{
@@ -65,7 +66,7 @@ func TestVideoEmbeddingWorkerWritesEmbedding(t *testing.T) {
 
 func TestVideoEmbeddingWorkerUpdatesByVideoAndModel(t *testing.T) {
 	repo := newMemoryVideoEmbeddingRepo()
-	service := applicationembedding.New(repo, domainembedding.NewHashNgramVectorizer())
+	service := applicationembedding.New(repo, infravector.NewHashNgramVectorizer())
 	worker := applicationembedding.NewVideoEmbeddingWorker(service, nil)
 
 	first := &applicationvideo.PublishedEvent{

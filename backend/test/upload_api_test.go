@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	applicationupload "GCFeed/internal/application/upload"
+	infrastorage "GCFeed/internal/infra/storage"
 	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
+	contract "GCFeed/internal/shared/contract"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,6 +39,29 @@ func (p *stubUploadProcessor) Faststart(ctx context.Context, path string) error 
 		return err
 	}
 	return os.WriteFile(path, append([]byte("faststart:"), data...), 0o644)
+}
+
+// stubMediaAdapter 把 stub 的校验/转码能力适配为 application 层的媒体处理端口。
+type stubMediaAdapter struct {
+	processor *stubUploadProcessor
+}
+
+func (a stubMediaAdapter) Probe(ctx context.Context, path string) (*contract.ProbeResult, error) {
+	if err := a.processor.ValidateVideo(ctx, path); err != nil {
+		return nil, err
+	}
+	// stub 已完成校验，返回满足规则的占位结果，交由上层规则层通过。
+	return &contract.ProbeResult{
+		DurationSeconds: 1,
+		HasVideo:        true,
+		Width:           1,
+		Height:          1,
+		VideoCodec:      "h264",
+	}, nil
+}
+
+func (a stubMediaAdapter) Faststart(ctx context.Context, path string) error {
+	return a.processor.Faststart(ctx, path)
 }
 
 func TestUploadVideoValidationAndFaststart(t *testing.T) {
@@ -92,7 +118,8 @@ func newUploadRouter(t *testing.T) (*gin.Engine, string, *stubUploadProcessor) {
 
 	root := t.TempDir()
 	processor := &stubUploadProcessor{}
-	handler := interfaceshttpupload.NewWithProcessor(root, processor)
+	service := applicationupload.New(infrastorage.New(root), stubMediaAdapter{processor: processor})
+	handler := interfaceshttpupload.New(service)
 
 	router := gin.New()
 	api := router.Group("/api")
