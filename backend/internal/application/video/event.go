@@ -2,31 +2,21 @@ package applicationvideo
 
 import (
 	domainvideo "GCFeed/internal/domain/video"
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
+	contract "GCFeed/internal/shared/contract"
 	"strings"
 	"time"
 )
 
-type PublishedEvent struct {
-	EventID     string    `json:"event_id"`
-	VideoID     int64     `json:"video_id"`
-	AuthorID    int64     `json:"author_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	MediaURL    string    `json:"media_url"`
-	CoverURL    string    `json:"cover_url"`
-	PublishedAt time.Time `json:"published_at"`
-	OccurredAt  time.Time `json:"occurred_at"`
-}
+// PublishedEvent 是视频发布事件契约，定义在 shared/contract。
+// 保留类型别名，使既有调用方与测试无需改动。
+type PublishedEvent = contract.PublishedEvent
 
 func NewPublishedEvent(video *domainvideo.Video) *PublishedEvent {
 	if video == nil || video.PublishedAt == nil {
 		return nil
 	}
 	return &PublishedEvent{
-		EventID:     newEventID(),
+		EventID:     contract.NewEventID(),
 		VideoID:     video.ID,
 		AuthorID:    video.AuthorID,
 		Title:       strings.TrimSpace(video.Title),
@@ -38,10 +28,3 @@ func NewPublishedEvent(video *domainvideo.Video) *PublishedEvent {
 	}
 }
 
-func newEventID() string {
-	content := make([]byte, 12)
-	if _, err := rand.Read(content); err == nil {
-		return hex.EncodeToString(content)
-	}
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}

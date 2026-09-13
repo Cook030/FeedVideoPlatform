@@ -2,7 +2,7 @@ package applicationinteraction
 
 import (
 	domaininteraction "GCFeed/internal/domain/interaction"
-	inframetrics "GCFeed/internal/infra/metrics"
+	contract "GCFeed/internal/shared/contract"
 	"context"
 	"time"
 )
@@ -20,6 +20,7 @@ type ActionWorker struct {
 	repo       domaininteraction.Repository
 	consumer   ActionEventConsumer
 	reconciler StatReconciler
+	observer   contract.WorkerObserver
 }
 
 func NewActionWorker(repo domaininteraction.Repository, consumer ActionEventConsumer, reconcilers ...StatReconciler) *ActionWorker {
@@ -35,6 +36,21 @@ func NewActionWorker(repo domaininteraction.Repository, consumer ActionEventCons
 	return worker
 }
 
+// WithObserver 注入后台任务观测端口；未注入时不采集指标。
+func (w *ActionWorker) WithObserver(observer contract.WorkerObserver) *ActionWorker {
+	if w != nil {
+		w.observer = observer
+	}
+	return w
+}
+
+func (w *ActionWorker) observeWorkerJob(job string, duration time.Duration, err error) {
+	if w == nil || w.observer == nil {
+		return
+	}
+	w.observer.ObserveWorkerJob(job, duration, err)
+}
+
 func (w *ActionWorker) Start(ctx context.Context) error {
 	if w == nil || w.consumer == nil {
 		return nil
@@ -46,7 +62,7 @@ func (w *ActionWorker) HandleActionChanged(ctx context.Context, event *ActionCha
 	start := time.Now()
 	var err error
 	defer func() {
-		inframetrics.ObserveWorkerJob("interaction_action_changed", time.Since(start), err)
+		w.observeWorkerJob("interaction_action_changed", time.Since(start), err)
 	}()
 
 	if event == nil {

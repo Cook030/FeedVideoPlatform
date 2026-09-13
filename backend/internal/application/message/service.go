@@ -2,6 +2,7 @@ package applicationmessage
 
 import (
 	domainmessage "GCFeed/internal/domain/message"
+	contract "GCFeed/internal/shared/contract"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,12 +18,11 @@ var ErrLoadMessageFailed = errors.New("failed to load message")
 var ErrSaveMessageFailed = errors.New("failed to save message")
 var ErrUpdateMessageFailed = errors.New("failed to update message")
 
-// UnreadCountUnknown 表示未读数获取失败，客户端应回退到 REST 查询。
-const UnreadCountUnknown = -1
-
+// 未读数与通知类型契约定义在 shared/contract，此处保留同名常量以兼容调用方。
 const (
-	NotificationTypeMessage = "message"
-	NotificationTypeUnread  = "unread"
+	UnreadCountUnknown      = contract.UnreadCountUnknown
+	NotificationTypeMessage = contract.NotificationTypeMessage
+	NotificationTypeUnread  = contract.NotificationTypeUnread
 )
 
 type Service struct {
@@ -30,13 +30,8 @@ type Service struct {
 	notifier Notifier
 }
 
-// Notification 描述一次需要实时下发的消息变更。
-type Notification struct {
-	UserID      int64
-	Type        string
-	Message     *domainmessage.Message
-	UnreadCount int
-}
+// Notification 描述一次需要实时下发的消息变更，契约定义在 shared/contract。
+type Notification = contract.Notification
 
 // Notifier 把消息变更推送到实时通道，属于尽力而为的旁路，失败不影响主流程。
 type Notifier interface {

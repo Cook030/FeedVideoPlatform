@@ -1,8 +1,8 @@
 package applicationembedding
 
 import (
-	applicationvideo "GCFeed/internal/application/video"
 	domainembedding "GCFeed/internal/domain/embedding"
+	contract "GCFeed/internal/shared/contract"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +10,7 @@ import (
 
 var ErrSaveVideoEmbeddingFailed = errors.New("failed to save video embedding")
 var ErrMarshalEmbeddingFailed = errors.New("failed to marshal embedding")
+var ErrVectorizerUnavailable = errors.New("embedding vectorizer is unavailable")
 
 type Service struct {
 	repo       domainembedding.Repository
@@ -21,10 +22,8 @@ type GenerateVideoEmbeddingResult struct {
 	CreatedOrUpdated bool
 }
 
+// New 装配向量化服务；vectorizer 由基础设施层实现并在装配时注入。
 func New(repo domainembedding.Repository, vectorizer domainembedding.Vectorizer) *Service {
-	if vectorizer == nil {
-		vectorizer = domainembedding.NewHashNgramVectorizer()
-	}
 	return &Service{
 		repo:       repo,
 		vectorizer: vectorizer,
@@ -32,9 +31,12 @@ func New(repo domainembedding.Repository, vectorizer domainembedding.Vectorizer)
 }
 
 // GenerateForPublishedVideo 根据视频发布事件生成并保存视频内容向量。
-func (s *Service) GenerateForPublishedVideo(ctx context.Context, event *applicationvideo.PublishedEvent) (*GenerateVideoEmbeddingResult, error) {
+func (s *Service) GenerateForPublishedVideo(ctx context.Context, event *contract.PublishedEvent) (*GenerateVideoEmbeddingResult, error) {
 	if event == nil || event.VideoID <= 0 {
 		return &GenerateVideoEmbeddingResult{}, nil
+	}
+	if s.vectorizer == nil {
+		return nil, ErrVectorizerUnavailable
 	}
 
 	text := domainembedding.BuildVideoText(event.Title, event.Description)

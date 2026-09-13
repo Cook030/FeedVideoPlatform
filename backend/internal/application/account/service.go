@@ -23,6 +23,7 @@ type TokenSigner interface {
 type Service struct {
 	repo            domainaccount.Repository
 	signer          TokenSigner
+	hasher          domainaccount.PasswordHasher
 	cardInvalidator FeedCacheInvalidator
 }
 
@@ -55,10 +56,11 @@ type Profile struct {
 	WorkCount      int
 }
 
-func New(repo domainaccount.Repository, signer TokenSigner, options ...Option) *Service {
+func New(repo domainaccount.Repository, signer TokenSigner, hasher domainaccount.PasswordHasher, options ...Option) *Service {
 	service := &Service{
 		repo:   repo,
 		signer: signer,
+		hasher: hasher,
 	}
 	for _, option := range options {
 		option(service)
@@ -75,7 +77,7 @@ func WithCardInvalidator(invalidator FeedCacheInvalidator) Option {
 
 // Register 创建新用户：领域层负责校验和加密密码，仓储层负责持久化。
 func (s *Service) Register(ctx context.Context, account, password, nickname string) (*Profile, error) {
-	user, err := domainaccount.New(account, password, nickname)
+	user, err := domainaccount.New(s.hasher, account, password, nickname)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +106,7 @@ func (s *Service) Login(ctx context.Context, account, password string) (*LoginRe
 		}
 		return nil, ErrLoadAccountFailed
 	}
-	if err := user.Authenticate(password); err != nil {
+	if err := user.Authenticate(s.hasher, password); err != nil {
 		return nil, err
 	}
 

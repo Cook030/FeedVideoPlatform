@@ -1,7 +1,7 @@
 package applicationexposure
 
 import (
-	inframetrics "GCFeed/internal/infra/metrics"
+	contract "GCFeed/internal/shared/contract"
 	"context"
 	"fmt"
 	"time"
@@ -36,6 +36,7 @@ type ViewEventWorker struct {
 	updater  InterestProfileUpdater
 	consumer ViewEventConsumer
 	dedup    EventDeduplicator
+	observer contract.WorkerObserver
 }
 
 // NewViewEventWorker 创建观看行为事件 worker，可选注入事件去重能力。
@@ -49,6 +50,21 @@ func NewViewEventWorker(updater InterestProfileUpdater, consumer ViewEventConsum
 	return worker
 }
 
+// WithObserver 注入后台任务观测端口；未注入时不采集指标。
+func (w *ViewEventWorker) WithObserver(observer contract.WorkerObserver) *ViewEventWorker {
+	if w != nil {
+		w.observer = observer
+	}
+	return w
+}
+
+func (w *ViewEventWorker) observeWorkerJob(job string, duration time.Duration, err error) {
+	if w == nil || w.observer == nil {
+		return
+	}
+	w.observer.ObserveWorkerJob(job, duration, err)
+}
+
 func (w *ViewEventWorker) Start(ctx context.Context) error {
 	if w == nil || w.updater == nil || w.consumer == nil {
 		return nil
@@ -59,7 +75,7 @@ func (w *ViewEventWorker) Start(ctx context.Context) error {
 func (w *ViewEventWorker) HandleViewEventRecorded(ctx context.Context, event *ViewEventRecordedEvent) (err error) {
 	start := time.Now()
 	defer func() {
-		inframetrics.ObserveWorkerJob("view_event_recorded", time.Since(start), err)
+		w.observeWorkerJob("view_event_recorded", time.Since(start), err)
 	}()
 
 	if event == nil {
@@ -71,9 +87,9 @@ func (w *ViewEventWorker) HandleViewEventRecorded(ctx context.Context, event *Vi
 		claimed, claimErr := w.dedup.Claim(ctx, dedupKey)
 		if claimErr != nil {
 			// 去重不可用时降级为继续处理：重复累加权重的影响小于丢事件。
-			inframetrics.ObserveWorkerJob("view_event_recorded_dedup_error", time.Since(start), claimErr)
+			w.observeWorkerJob("view_event_recorded_dedup_error", time.Since(start), claimErr)
 		} else if !claimed {
-			inframetrics.ObserveWorkerJob("view_event_recorded_duplicate", time.Since(start), nil)
+			w.observeWorkerJob("view_event_recorded_duplicate", time.Since(start), nil)
 			return nil
 		}
 	}

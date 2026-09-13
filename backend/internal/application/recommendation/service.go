@@ -3,6 +3,7 @@ package applicationrecommendation
 import (
 	domainembedding "GCFeed/internal/domain/embedding"
 	domainrecommendation "GCFeed/internal/domain/recommendation"
+	contract "GCFeed/internal/shared/contract"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -18,7 +19,8 @@ const candidatePoolMultiplier = 8
 const minCandidatePoolSize = 50
 const maxCandidatePoolSize = 500
 
-var ErrLoadRecommendationFailed = errors.New("failed to load recommendations")
+// ErrLoadRecommendationFailed 保留原有包内名称，值来自中立契约包，供 Feed 等跨上下文调用方判定。
+var ErrLoadRecommendationFailed = contract.ErrRecommendationUnavailable
 var ErrLoadExposureDecisionsFailed = errors.New("failed to load exposure decisions")
 var ErrSaveRecommendationExposureFailed = errors.New("failed to save recommendation exposure")
 
@@ -29,22 +31,11 @@ type Service struct {
 
 type Option func(*Service)
 
-type CandidateRequest struct {
-	UserID    int64
-	Scene     string
-	RequestID string
-	Cursor    string
-	Limit     int
-}
+// CandidateRequest / CandidateResult 是推荐候选契约，定义在 shared/contract。
+// 保留类型别名，使既有调用方与测试无需改动。
+type CandidateRequest = contract.CandidateRequest
 
-type CandidateResult struct {
-	UserID     int64
-	Scene      string
-	RequestID  string
-	Candidates []*domainrecommendation.Candidate
-	NextCursor string
-	HasMore    bool
-}
+type CandidateResult = contract.CandidateResult
 
 type ExposureInput struct {
 	UserID    int64
@@ -262,7 +253,7 @@ func (s *Service) rankCandidates(ctx context.Context, userID int64, pool []*doma
 			continue
 		}
 		value := *candidate
-		value.FreshnessScore = freshnessScore(now, value.PublishedAt)
+		value.FreshnessScore = domainrecommendation.FreshnessScore(now, value.PublishedAt)
 		value.Similarity = 0
 		if hasUserVector {
 			if vector := vectors[value.VideoID]; len(vector) > 0 {
@@ -272,8 +263,8 @@ func (s *Service) rankCandidates(ctx context.Context, userID int64, pool []*doma
 				}
 			}
 		}
-		value.RankScore = rankScore(value.Similarity, value.HotScore, value.FreshnessScore, hasUserVector)
-		value.Reason = recommendationReason(hasUserVector, value.Similarity, value.HotScore)
+		value.RankScore = domainrecommendation.RankScore(value.Similarity, value.HotScore, value.FreshnessScore, hasUserVector)
+		value.Reason = domainrecommendation.Reason(hasUserVector, value.Similarity, value.HotScore)
 		ranked = append(ranked, &value)
 	}
 
@@ -300,35 +291,6 @@ func candidatePoolLimit(limit int) int {
 		poolLimit = maxCandidatePoolSize
 	}
 	return poolLimit
-}
-
-func rankScore(similarity float64, hotScore int, freshness float64, hasUserVector bool) float64 {
-	hot := math.Log1p(float64(maxInt(hotScore, 0))) / 10
-	if hasUserVector {
-		return similarity*0.70 + hot*0.20 + freshness*0.10
-	}
-	return hot*0.65 + freshness*0.35
-}
-
-func freshnessScore(now time.Time, publishedAt time.Time) float64 {
-	if publishedAt.IsZero() {
-		return 0
-	}
-	hours := now.Sub(publishedAt).Hours()
-	if hours < 0 {
-		hours = 0
-	}
-	return 1 / (1 + hours/72)
-}
-
-func recommendationReason(hasUserVector bool, similarity float64, hotScore int) string {
-	if hasUserVector && similarity > 0.05 {
-		return "interest_match"
-	}
-	if hotScore > 0 {
-		return "hot"
-	}
-	return "fresh"
 }
 
 func sortCandidates(candidates []*domainrecommendation.Candidate) {
@@ -452,9 +414,4 @@ func encodeCursor(cursor *domainrecommendation.Cursor) string {
 	return base64.RawURLEncoding.EncodeToString(content)
 }
 
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
-}
+

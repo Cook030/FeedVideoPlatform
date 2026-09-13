@@ -2,7 +2,7 @@ package applicationvideo
 
 import (
 	domainfeed "GCFeed/internal/domain/feed"
-	inframetrics "GCFeed/internal/infra/metrics"
+	contract "GCFeed/internal/shared/contract"
 	"context"
 	"time"
 )
@@ -43,6 +43,7 @@ type FanoutWorker struct {
 	inboxMaxLen  int64
 	outboxMaxLen int64
 	preheatTTL   time.Duration
+	observer     contract.WorkerObserver
 }
 
 type FanoutWorkerOption func(*FanoutWorker)
@@ -104,6 +105,21 @@ func WithFanoutBatchSize(size int) FanoutWorkerOption {
 	}
 }
 
+// WithObserver 注入后台任务观测端口；未注入时不采集指标。
+func (w *FanoutWorker) WithObserver(observer contract.WorkerObserver) *FanoutWorker {
+	if w != nil {
+		w.observer = observer
+	}
+	return w
+}
+
+func (w *FanoutWorker) observeWorkerJob(job string, duration time.Duration, err error) {
+	if w == nil || w.observer == nil {
+		return
+	}
+	w.observer.ObserveWorkerJob(job, duration, err)
+}
+
 func (w *FanoutWorker) Start(ctx context.Context) error {
 	if w == nil || w.consumer == nil {
 		return nil
@@ -114,7 +130,7 @@ func (w *FanoutWorker) Start(ctx context.Context) error {
 func (w *FanoutWorker) HandleVideoPublished(ctx context.Context, event *PublishedEvent) (err error) {
 	start := time.Now()
 	defer func() {
-		inframetrics.ObserveWorkerJob("video_fanout", time.Since(start), err)
+		w.observeWorkerJob("video_fanout", time.Since(start), err)
 	}()
 
 	if event == nil || event.VideoID <= 0 || event.AuthorID <= 0 {
