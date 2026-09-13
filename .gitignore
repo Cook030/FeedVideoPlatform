@@ -3,4 +3,6 @@ backend/uploads/*
 
 docs/
 
+API.md
+
 .codebuddy/
