@@ -3,6 +3,7 @@ package infrarecommendation
 import (
 	domainembedding "GCFeed/internal/domain/embedding"
 	domainexposure "GCFeed/internal/domain/exposure"
+	domainfeed "GCFeed/internal/domain/feed"
 	domainrecommendation "GCFeed/internal/domain/recommendation"
 	domainvideo "GCFeed/internal/domain/video"
 	infraexposure "GCFeed/internal/infra/persistence/exposure"
@@ -15,7 +16,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const hotScoreExpression = "COALESCE(vs.like_count, 0) * 3 + COALESCE(vs.comment_count, 0) * 5 + COALESCE(vs.favorite_count, 0) * 4"
+// hotScoreExpression 与 Feed 仓储共用 domain 的权威口径。
+var hotScoreExpression = domainfeed.HotScoreSQLExpression("vs.like_count", "vs.comment_count", "vs.favorite_count")
 
 // UserInterestCache 缓存用户兴趣向量，未命中时由本仓储回源聚合后回填。
 type UserInterestCache interface {

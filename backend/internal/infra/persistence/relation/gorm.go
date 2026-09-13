@@ -79,9 +79,7 @@ func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID i
 			if err := tx.Create(&follow).Error; err != nil {
 				return err
 			}
-			if active {
-				delta = 1
-			}
+			delta = domainrelation.ResolveFollowDelta(domainrelation.FollowStatusUnset, active)
 		} else {
 			if idempotencyKey != "" && idempotencyKeyValue(follow.IdempotencyKey) == idempotencyKey {
 				var err error
@@ -95,13 +93,7 @@ func (r *Repository) SetFollow(ctx context.Context, userID int64, targetUserID i
 
 			previousStatus := follow.Status
 			previousIdempotencyKey := idempotencyKeyValue(follow.IdempotencyKey)
-			if follow.Status != nextStatus {
-				if active {
-					delta = 1
-				} else {
-					delta = -1
-				}
-			}
+			delta = domainrelation.ResolveFollowDelta(follow.Status, active)
 			follow.Status = nextStatus
 			follow.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
 			if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey {

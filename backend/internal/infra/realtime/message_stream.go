@@ -1,8 +1,8 @@
-package infracache
+// Package inforealtime 提供消息实时通道的基础设施实现：
+// 基于 Redis Pub/Sub 的跨实例扇出（MessageStream）与本实例 SSE 连接注册表（Hub）。
+package inforealtime
 
 import (
-	applicationmessage "GCFeed/internal/application/message"
-	infraconfig "GCFeed/internal/infra/config"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	infraconfig "GCFeed/internal/infra/config"
+	contract "GCFeed/internal/shared/contract"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -95,8 +98,8 @@ func (s *MessageStream) Close() error {
 	return s.client.Close()
 }
 
-// Notify 实现 applicationmessage.Notifier，把消息变更发布到接收用户频道。
-func (s *MessageStream) Notify(ctx context.Context, notification applicationmessage.Notification) error {
+// Notify 把消息变更发布到接收用户频道。
+func (s *MessageStream) Notify(ctx context.Context, notification contract.Notification) error {
 	if s == nil || s.client == nil || notification.UserID <= 0 {
 		return nil
 	}
@@ -183,8 +186,9 @@ func parseMessageStreamUserID(channel string) (int64, bool) {
 }
 
 // buildNotificationData 把应用层通知转换成 SSE 的 data 负载。
-func buildNotificationData(notification applicationmessage.Notification) json.RawMessage {
-	if notification.Type == applicationmessage.NotificationTypeMessage {
+// 字段名属于对外契约（SSE 协议），改动必须走契约比对。
+func buildNotificationData(notification contract.Notification) json.RawMessage {
+	if notification.Type == contract.NotificationTypeMessage {
 		if notification.Message == nil {
 			return nil
 		}

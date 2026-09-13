@@ -135,9 +135,7 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 			if err := tx.Create(&action).Error; err != nil {
 				return err
 			}
-			if active {
-				delta = 1
-			}
+			delta = domaininteraction.ResolveActionDelta(domaininteraction.ActionStatusUnset, active)
 		} else {
 			// 同一幂等键直接返回当前计数，避免客户端重试重复变更统计。
 			if idempotencyKey != "" && idempotencyKeyValue(action.IdempotencyKey) == idempotencyKey {
@@ -152,13 +150,7 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 			// 只有状态真正变化时才更新 video_stat，重复 PUT 或 DELETE 保持计数稳定。
 			previousStatus := action.Status
 			previousIdempotencyKey := idempotencyKeyValue(action.IdempotencyKey)
-			if action.Status != nextStatus {
-				if active {
-					delta = 1
-				} else {
-					delta = -1
-				}
-			}
+			delta = domaininteraction.ResolveActionDelta(action.Status, active)
 			action.Status = nextStatus
 			action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
 			if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey {
@@ -187,12 +179,9 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 	return restoreAction(action), count, statDelta, nil
 }
 
-// actionStatusFromActive 将接口目标状态转换为数据库状态枚举。
+// actionStatusFromActive 将接口目标状态转换为数据库状态枚举，口径由领域层提供。
 func actionStatusFromActive(active bool) int {
-	if active {
-		return domaininteraction.ActionStatusActive
-	}
-	return domaininteraction.ActionStatusCanceled
+	return domaininteraction.StatusFromActive(active)
 }
 
 // CreateComment 创建评论，并在同一事务内增加视频评论数。
@@ -349,7 +338,7 @@ func (r *Repository) DeleteComment(ctx context.Context, commentID int64, userID 
 			return mapVideoError(err)
 		}
 
-		if model.UserID != userID && video.AuthorID != userID && role != domainaccount.RoleAdmin {
+		if !domaininteraction.CanDeleteComment(userID, model.UserID, video.AuthorID, role) {
 			return domaininteraction.ErrCommentPermissionDenied
 		}
 

@@ -11,7 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
-const hotScoreExpression = "COALESCE(vs.like_count, 0) * 3 + COALESCE(vs.comment_count, 0) * 5 + COALESCE(vs.favorite_count, 0) * 4"
+// hotScoreExpression 由 domain 的唯一权威口径生成，避免 SQL 与 Go 打分公式分叉。
+var hotScoreExpression = domainfeed.HotScoreSQLExpression("vs.like_count", "vs.comment_count", "vs.favorite_count")
 
 type Repository struct {
 	db *gorm.DB
