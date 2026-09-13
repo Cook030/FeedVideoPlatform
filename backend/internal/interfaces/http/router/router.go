@@ -1,30 +1,6 @@
 package interfaceshttprouter
 
 import (
-	applicationaccount "GCFeed/internal/application/account"
-	applicationexposure "GCFeed/internal/application/exposure"
-	applicationfeed "GCFeed/internal/application/feed"
-	applicationinteraction "GCFeed/internal/application/interaction"
-	applicationmessage "GCFeed/internal/application/message"
-	applicationplayback "GCFeed/internal/application/playback"
-	applicationrecommendation "GCFeed/internal/application/recommendation"
-	applicationrelation "GCFeed/internal/application/relation"
-	applicationvideo "GCFeed/internal/application/video"
-	domainfeed "GCFeed/internal/domain/feed"
-	infracache "GCFeed/internal/infra/cache"
-	infraconfig "GCFeed/internal/infra/config"
-	infrajwt "GCFeed/internal/infra/jwt"
-	inframq "GCFeed/internal/infra/mq"
-	infraaccount "GCFeed/internal/infra/persistence/account"
-	infraexposure "GCFeed/internal/infra/persistence/exposure"
-	infrafeed "GCFeed/internal/infra/persistence/feed"
-	infrainteraction "GCFeed/internal/infra/persistence/interaction"
-	inframessage "GCFeed/internal/infra/persistence/message"
-	migration "GCFeed/internal/infra/persistence/migration"
-	infraplayback "GCFeed/internal/infra/persistence/playback"
-	infrarecommendation "GCFeed/internal/infra/persistence/recommendation"
-	infrarelation "GCFeed/internal/infra/persistence/relation"
-	infravideo "GCFeed/internal/infra/persistence/video"
 	interfaceshttpaccount "GCFeed/internal/interfaces/http/account"
 	interfaceshttpexposure "GCFeed/internal/interfaces/http/exposure"
 	interfaceshttpfeed "GCFeed/internal/interfaces/http/feed"
@@ -36,140 +12,53 @@ import (
 	interfaceshttprelation "GCFeed/internal/interfaces/http/relation"
 	interfaceshttpupload "GCFeed/internal/interfaces/http/upload"
 	interfaceshttpvideo "GCFeed/internal/interfaces/http/video"
-	"context"
-	"database/sql"
-	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	gormmysql "gorm.io/driver/mysql"
-	"gorm.io/gorm"
 )
 
-// Register 负责后端依赖装配：数据库模型、仓储、Service、Handler、中间件和路由。
-func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
-	// database/sql 连接池交给 GORM 复用，避免维护两套数据库连接。
-	gormDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
-		Conn: db,
-	}), &gorm.Config{})
-	if err != nil {
-		return err
-	}
+// Deps 汇总路由注册所需的 Handler 与中间件。
+// 依赖装配由 internal/bootstrap 完成；本包不感知任何 infra 实现。
+type Deps struct {
+	Account        *interfaceshttpaccount.Handler
+	Feed           *interfaceshttpfeed.Handler
+	Video          *interfaceshttpvideo.Handler
+	Interaction    *interfaceshttpinteraction.Handler
+	Relation       *interfaceshttprelation.Handler
+	Message        *interfaceshttpmessage.Handler
+	MessageStream  *interfaceshttpmessage.StreamHandler
+	Exposure       *interfaceshttpexposure.Handler
+	Playback       *interfaceshttpplayback.Handler
+	Recommendation *interfaceshttprecommendation.Handler
+	Upload         *interfaceshttpupload.Handler
 
-	// AutoMigrate 根据模型创建或补齐表结构，适合教学项目快速启动。
-	if err := migration.AutoMigrate(gormDB); err != nil {
-		return err
-	}
+	JWTAuth         gin.HandlerFunc
+	OptionalJWTAuth gin.HandlerFunc
+	InternalToken   string
+}
 
-	// JWT Manager 同时被账号服务用于签发 token，也被鉴权中间件用于校验 token。
-	jwtManager, err := infrajwt.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTL)
-	if err != nil {
-		return err
-	}
-
-	// 下面按领域模块组装依赖：Repository -> Service -> Handler。
-	videoRepo := infravideo.New(gormDB)
-	feedRepo := infrafeed.New(gormDB)
-	var interestCache *infracache.UserInterestCache
-	feedOptions := []applicationfeed.Option{}
-	videoOptions := []applicationvideo.Option{}
-	interactionOptions := []applicationinteraction.Option{}
-	exposureOptions := []applicationexposure.Option{}
-	messageOptions := []applicationmessage.Option{}
-	var feedCache *infracache.FeedCache
-	var rabbitMQ *inframq.RabbitMQ
-	var messageStream *infracache.MessageStream
-	if cfg.Redis.Addr != "" {
-		redisClient := infracache.NewRedisClient(cfg.Redis)
-		feedCache = infracache.NewFeedCache(redisClient)
-		interestCache = infracache.NewUserInterestCache(redisClient)
-		// 消息实时通道使用独立 Redis 客户端做 Pub/Sub 扇出，支持 API 多实例。
-		messageStream = infracache.NewMessageStream(cfg.Redis)
-		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
-		messageOptions = append(messageOptions, applicationmessage.WithNotifier(messageStream))
-		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
-		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
-	}
-	recommendationOptions := []infrarecommendation.Option{}
-	if interestCache != nil {
-		recommendationOptions = append(recommendationOptions, infrarecommendation.WithUserInterestCache(interestCache))
-	}
-	recommendationRepo := infrarecommendation.New(gormDB, recommendationOptions...)
-	recommendationService := applicationrecommendation.New(recommendationRepo)
-	recommendationHandler := interfaceshttprecommendation.New(recommendationService)
-	feedOptions = append(feedOptions, applicationfeed.WithRecommender(recommendationService))
-	accountRepo := infraaccount.New(gormDB)
-	if feedCache != nil {
-		// 资料变更后失效卡片缓存；视频删除后失效对应卡片缓存。
-		videoOptions = append(videoOptions, applicationvideo.WithCardInvalidator(feedCache))
-	}
-	accountOptions := []applicationaccount.Option{}
-	if feedCache != nil {
-		accountOptions = append(accountOptions, applicationaccount.WithCardInvalidator(feedCache))
-	}
-	accountService := applicationaccount.New(accountRepo, jwtManager, accountOptions...)
-	accountHandler := interfaceshttpaccount.New(accountService)
-	feedService := applicationfeed.New(feedRepo, feedOptions...)
-	feedHandler := interfaceshttpfeed.New(feedService)
-	interactionRepo := infrainteraction.New(gormDB)
-	messageRepo := inframessage.New(gormDB)
-	messageService := applicationmessage.New(messageRepo, messageOptions...)
-	messageHandler := interfaceshttpmessage.New(messageService)
-	messageHub := interfaceshttpmessage.NewHub()
-	messageStreamHandler := interfaceshttpmessage.NewStreamHandler(messageService, messageHub, messageStream)
-	if messageStream != nil {
-		// 订阅全部用户频道，把事件投递给本实例持有的 SSE 连接。
-		go func() {
-			if err := messageStream.Run(ctx, messageHub.OnEvent); err != nil && ctx.Err() == nil {
-				log.Printf("message stream stopped: %v", err)
-			}
-		}()
-		// 进程退出时主动关闭 SSE 连接，让客户端尽快重连到其它实例。
-		go func() {
-			<-ctx.Done()
-			messageHub.Close()
-		}()
-	}
-	playbackRepo := infraplayback.New(gormDB)
-	playbackService := applicationplayback.New(playbackRepo)
-	playbackHandler := interfaceshttpplayback.New(playbackService)
-	if cfg.RabbitMQ.URL != "" {
-		rabbitMQ, err = inframq.NewRabbitMQ(cfg.RabbitMQ)
-		if err != nil {
-			log.Printf("rabbitmq disabled: %v", err)
-		} else {
-			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(rabbitMQ))
-			exposureOptions = append(exposureOptions, applicationexposure.WithViewEventPublisher(rabbitMQ))
-			if feedCache != nil {
-				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, rabbitMQ))
-			}
-		}
-	}
-	messageWriter := NewMessageWriter(messageService)
-	interactionOptions = append(interactionOptions, applicationinteraction.WithMessageWriter(messageWriter))
-	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
-	videoService := applicationvideo.New(videoRepo, videoOptions...)
-	videoHandler := interfaceshttpvideo.New(videoService)
-	interactionService := applicationinteraction.New(interactionRepo, interactionOptions...)
-	interactionHandler := interfaceshttpinteraction.New(interactionService)
-	exposureRepo := infraexposure.New(gormDB)
-	exposureService := applicationexposure.New(exposureRepo, exposureOptions...)
-	exposureHandler := interfaceshttpexposure.New(exposureService)
-	relationRepo := infrarelation.New(gormDB)
-	if feedCache != nil {
-		relationOptions = append(relationOptions, applicationrelation.WithFollowFeedBackfiller(NewFollowFeedBackfiller(feedRepo, feedCache)))
-	}
-	relationService := applicationrelation.New(relationRepo, relationOptions...)
-	relationHandler := interfaceshttprelation.New(relationService)
-	uploadHandler := interfaceshttpupload.New("./uploads")
+// Register 只做路由注册：路径、方法与中间件顺序与此前版本逐条保持一致。
+func Register(g *gin.Engine, deps Deps) {
+	// 局部别名让路由注册代码保持原样，避免逐行替换引入偏差。
+	accountHandler := deps.Account
+	feedHandler := deps.Feed
+	videoHandler := deps.Video
+	interactionHandler := deps.Interaction
+	relationHandler := deps.Relation
+	messageHandler := deps.Message
+	messageStreamHandler := deps.MessageStream
+	exposureHandler := deps.Exposure
+	playbackHandler := deps.Playback
+	recommendationHandler := deps.Recommendation
+	uploadHandler := deps.Upload
+	authMiddleware := deps.JWTAuth
+	optionalAuthMiddleware := deps.OptionalJWTAuth
 
 	g.GET("/health", HealthCheck)
 	g.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	// 静态文件路由让上传后的文件可以通过 /uploads/... 访问。
 	g.Static("/uploads", "./uploads")
 
-	authMiddleware := interfaceshttpmiddleware.NewJWTAuth(jwtManager)
-	optionalAuthMiddleware := interfaceshttpmiddleware.NewOptionalJWTAuth(jwtManager)
 	api := g.Group("/api")
 
 	// RESTful 路由约定：路径表达资源，HTTP 方法表达动作。
@@ -226,63 +115,8 @@ func Register(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 	internal.POST("/recommendation-candidates", recommendationHandler.ListCandidates)
 	internal.POST("/exposure-decisions", recommendationHandler.DecideExposures)
 	internal.POST("/exposures", recommendationHandler.SaveExposures)
-	internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), messageHandler.Create)
-	internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(cfg.Internal.Token), playbackHandler.CreateInternalQoSReport)
-
-	return nil
-}
-
-type MessageWriter struct {
-	service *applicationmessage.Service
-}
-
-func NewMessageWriter(service *applicationmessage.Service) *MessageWriter {
-	return &MessageWriter{service: service}
-}
-
-func (w *MessageWriter) CreateFromEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string) (any, error) {
-	return w.service.CreateFromEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey)
-}
-
-func (w *MessageWriter) CreateFromActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string) (any, error) {
-	return w.service.CreateFromActorEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey, actorID, actorNickname, actorAvatarURL)
-}
-
-type FollowFeedBackfiller struct {
-	feedRepo interface {
-		CountFollowers(ctx context.Context, authorID int64) (int, error)
-		ListAuthorRecentVideos(ctx context.Context, authorID int64, limit int) ([]*domainfeed.FeedPageItem, error)
-	}
-	feedCache interface {
-		AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error
-		RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error
-	}
-}
-
-func NewFollowFeedBackfiller(feedRepo interface {
-	CountFollowers(ctx context.Context, authorID int64) (int, error)
-	ListAuthorRecentVideos(ctx context.Context, authorID int64, limit int) ([]*domainfeed.FeedPageItem, error)
-}, feedCache interface {
-	AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error
-	RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error
-}) *FollowFeedBackfiller {
-	return &FollowFeedBackfiller{feedRepo: feedRepo, feedCache: feedCache}
-}
-
-func (b *FollowFeedBackfiller) CountFollowers(ctx context.Context, authorID int64) (int, error) {
-	return b.feedRepo.CountFollowers(ctx, authorID)
-}
-
-func (b *FollowFeedBackfiller) ListAuthorRecentVideos(ctx context.Context, authorID int64, limit int) ([]*domainfeed.FeedPageItem, error) {
-	return b.feedRepo.ListAuthorRecentVideos(ctx, authorID, limit)
-}
-
-func (b *FollowFeedBackfiller) AddInboxItems(ctx context.Context, authorID int64, userIDs []int64, item *domainfeed.FeedPageItem, maxLen int64) error {
-	return b.feedCache.AddInboxItems(ctx, authorID, userIDs, item, maxLen)
-}
-
-func (b *FollowFeedBackfiller) RemoveInboxAuthor(ctx context.Context, userID int64, authorID int64) error {
-	return b.feedCache.RemoveInboxAuthor(ctx, userID, authorID)
+	internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), messageHandler.Create)
+	internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), playbackHandler.CreateInternalQoSReport)
 }
 
 // HealthCheck 提供基础健康检查接口，方便本地调试和容器探活。

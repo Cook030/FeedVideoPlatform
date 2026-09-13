@@ -3,11 +3,9 @@ package interfaceshttpinteraction
 import (
 	applicationinteraction "GCFeed/internal/application/interaction"
 	domaininteraction "GCFeed/internal/domain/interaction"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	sharedhttputil "GCFeed/internal/shared/httputil"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -47,14 +45,14 @@ func (h *Handler) Unfavorite(c *gin.Context) {
 // CreateComment 创建视频评论，videoId 来自路径，评论内容来自请求体。
 func (h *Handler) CreateComment(c *gin.Context) {
 	// JWT 中间件会把用户 ID 写入 gin.Context，业务 Handler 从上下文取登录用户。
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
 	}
 
 	// videoId 放在路径里，体现评论属于某个视频资源。
-	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	videoID, err := sharedhttputil.ParsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -77,13 +75,13 @@ func (h *Handler) CreateComment(c *gin.Context) {
 // ListComments 查询指定视频的评论列表，分页参数来自 query。
 func (h *Handler) ListComments(c *gin.Context) {
 	// 评论列表是视频的子资源，查询条件只保留分页参数。
-	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	videoID, err := sharedhttputil.ParsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
 	}
 
-	limit, err := parseLimit(c.Query("limit"))
+	limit, err := sharedhttputil.ParseLimit(c.Query("limit"), domaininteraction.ErrInvalidLimit)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -99,15 +97,15 @@ func (h *Handler) ListComments(c *gin.Context) {
 
 // DeleteComment 删除评论，权限判断交给应用层和仓储层完成。
 func (h *Handler) DeleteComment(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
 	}
-	role := roleFromContext(c)
+	role := sharedhttputil.RoleFromContext(c)
 
 	// 删除权限在应用服务和仓储中判断，Handler 只负责传入操作者信息。
-	commentID, err := parsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidCommentID)
+	commentID, err := sharedhttputil.ParsePositiveInt64(c.Param("commentId"), domaininteraction.ErrInvalidCommentID)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -127,13 +125,13 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 
 func (h *Handler) setLike(c *gin.Context, active bool) {
 	// 点赞和取消点赞共用参数解析逻辑，active 决定最终状态。
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
 	}
 
-	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	videoID, err := sharedhttputil.ParsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -154,13 +152,13 @@ func (h *Handler) setLike(c *gin.Context, active bool) {
 
 func (h *Handler) setFavorite(c *gin.Context, active bool) {
 	// 收藏和取消收藏共用参数解析逻辑，active 决定最终状态。
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
 	}
 
-	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	videoID, err := sharedhttputil.ParsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -177,90 +175,6 @@ func (h *Handler) setFavorite(c *gin.Context, active bool) {
 		return
 	}
 	c.JSON(http.StatusOK, actionResponseFromResult(result))
-}
-
-// userIDFromContext 从 JWT 中间件写入的上下文中读取当前登录用户 ID。
-func userIDFromContext(c *gin.Context) (int64, bool) {
-	// ContextUserIDKey 由 JWT 中间件写入，缺失时按未登录处理。
-	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
-	if !exists {
-		return 0, false
-	}
-	userID, ok := value.(int64)
-	return userID, ok && userID > 0
-}
-
-func roleFromContext(c *gin.Context) string {
-	value, exists := c.Get(interfaceshttpmiddleware.ContextRoleKey)
-	if !exists {
-		return ""
-	}
-	role, _ := value.(string)
-	return role
-}
-
-// parsePositiveInt64 统一解析路径参数和查询参数中的正整数 ID。
-func parsePositiveInt64(raw string, fallback error) (int64, error) {
-	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fallback
-	}
-	return value, nil
-}
-
-// parseLimit 只处理用户显式传入的 limit，默认值由应用服务统一决定。
-func parseLimit(raw string) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	limit, err := strconv.Atoi(raw)
-	if err != nil || limit <= 0 {
-		return 0, domaininteraction.ErrInvalidLimit
-	}
-	return limit, nil
-}
-
-// actionResponseFromResult 把应用层点赞/收藏结果转换为 HTTP 响应。
-func actionResponseFromResult(result *applicationinteraction.ActionResult) actionResponse {
-	return actionResponse{
-		VideoID:       result.VideoID,
-		ActionType:    result.ActionType,
-		Active:        result.Active,
-		LikeCount:     result.LikeCount,
-		FavoriteCount: result.FavoriteCount,
-	}
-}
-
-func commentResponseFromResult(result *applicationinteraction.CreateCommentResult) commentResponse {
-	response := commentResponseFromDomain(result.Comment)
-	response.CommentCount = result.CommentCount
-	return response
-}
-
-// commentListResponseFromResult 把领域评论列表转换为前端需要的列表结构。
-func commentListResponseFromResult(result *applicationinteraction.CommentListResult) commentListResponse {
-	items := make([]commentResponse, 0, len(result.Items))
-	for _, item := range result.Items {
-		items = append(items, commentResponseFromDomain(item))
-	}
-	return commentListResponse{
-		Items:      items,
-		NextCursor: result.NextCursor,
-		HasMore:    result.HasMore,
-	}
-}
-
-func commentResponseFromDomain(comment *domaininteraction.Comment) commentResponse {
-	return commentResponse{
-		ID:            comment.ID,
-		VideoID:       comment.VideoID,
-		UserID:        comment.UserID,
-		UserNickname:  comment.UserNickname,
-		UserAvatarURL: comment.UserAvatarURL,
-		Content:       comment.Content,
-		CreatedAt:     comment.CreatedAt,
-	}
 }
 
 func writeInteractionError(c *gin.Context, err error) {

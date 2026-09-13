@@ -89,63 +89,6 @@ func (h *Handler) DecideExposures(c *gin.Context) {
 	c.JSON(http.StatusOK, exposureDecisionsResponseFromResult(result))
 }
 
-func candidateResponseFromResult(result *applicationrecommendation.CandidateResult) candidateResponse {
-	items := make([]candidateItemResponse, 0, len(result.Candidates))
-	for _, candidate := range result.Candidates {
-		items = append(items, candidateItemResponse{
-			VideoID:        candidate.VideoID,
-			AuthorID:       candidate.AuthorID,
-			RankScore:      candidate.RankScore,
-			Similarity:     candidate.Similarity,
-			HotScore:       candidate.HotScore,
-			FreshnessScore: candidate.FreshnessScore,
-			Reason:         candidate.Reason,
-			PublishedAt:    candidate.PublishedAt,
-		})
-	}
-	return candidateResponse{
-		UserID:     result.UserID,
-		Scene:      result.Scene,
-		RequestID:  result.RequestID,
-		Candidates: items,
-		NextCursor: result.NextCursor,
-		HasMore:    result.HasMore,
-	}
-}
-
-func exposuresResponseFromResult(result *applicationrecommendation.ExposureResult) exposuresResponse {
-	items := make([]exposureItemResponse, 0, len(result.Exposures))
-	for _, exposure := range result.Exposures {
-		items = append(items, exposureItemResponse{
-			UserID:         exposure.UserID,
-			VideoID:        exposure.VideoID,
-			FirstExposedAt: exposure.FirstExposedAt,
-			LastExposedAt:  exposure.LastExposedAt,
-			ExposureCount:  exposure.ExposureCount,
-			LastScene:      exposure.LastScene,
-		})
-	}
-	return exposuresResponse{Exposures: items}
-}
-
-func exposureDecisionsResponseFromResult(result *applicationrecommendation.ExposureDecisionResult) exposureDecisionsResponse {
-	items := make([]exposureDecisionItemResponse, 0, len(result.Decisions))
-	for _, decision := range result.Decisions {
-		items = append(items, exposureDecisionItemResponse{
-			VideoID:       decision.VideoID,
-			Allowed:       decision.Allowed,
-			Reason:        decision.Reason,
-			LastExposedAt: decision.LastExposedAt,
-		})
-	}
-	return exposureDecisionsResponse{
-		UserID:    result.UserID,
-		Scene:     result.Scene,
-		RequestID: result.RequestID,
-		Decisions: items,
-	}
-}
-
 func writeRecommendationError(c *gin.Context, err error) {
 	if isBadRequestError(err) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

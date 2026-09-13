@@ -1,6 +1,10 @@
 package interfaceshttprecommendation
 
-import "time"
+import (
+	"time"
+
+	applicationrecommendation "GCFeed/internal/application/recommendation"
+)
 
 type candidateRequest struct {
 	UserID    int64  `json:"user_id"`
@@ -69,4 +73,64 @@ type exposureItemResponse struct {
 	LastExposedAt  time.Time `json:"last_exposed_at"`
 	ExposureCount  int       `json:"exposure_count"`
 	LastScene      string    `json:"last_scene"`
+}
+
+// candidateResponseFromResult 把推荐候选结果转换为 HTTP 响应。
+func candidateResponseFromResult(result *applicationrecommendation.CandidateResult) candidateResponse {
+	items := make([]candidateItemResponse, 0, len(result.Candidates))
+	for _, candidate := range result.Candidates {
+		items = append(items, candidateItemResponse{
+			VideoID:        candidate.VideoID,
+			AuthorID:       candidate.AuthorID,
+			RankScore:      candidate.RankScore,
+			Similarity:     candidate.Similarity,
+			HotScore:       candidate.HotScore,
+			FreshnessScore: candidate.FreshnessScore,
+			Reason:         candidate.Reason,
+			PublishedAt:    candidate.PublishedAt,
+		})
+	}
+	return candidateResponse{
+		UserID:     result.UserID,
+		Scene:      result.Scene,
+		RequestID:  result.RequestID,
+		Candidates: items,
+		NextCursor: result.NextCursor,
+		HasMore:    result.HasMore,
+	}
+}
+
+// exposuresResponseFromResult 把曝光写入结果转换为 HTTP 响应。
+func exposuresResponseFromResult(result *applicationrecommendation.ExposureResult) exposuresResponse {
+	items := make([]exposureItemResponse, 0, len(result.Exposures))
+	for _, exposure := range result.Exposures {
+		items = append(items, exposureItemResponse{
+			UserID:         exposure.UserID,
+			VideoID:        exposure.VideoID,
+			FirstExposedAt: exposure.FirstExposedAt,
+			LastExposedAt:  exposure.LastExposedAt,
+			ExposureCount:  exposure.ExposureCount,
+			LastScene:      exposure.LastScene,
+		})
+	}
+	return exposuresResponse{Exposures: items}
+}
+
+// exposureDecisionsResponseFromResult 把曝光决策结果转换为 HTTP 响应。
+func exposureDecisionsResponseFromResult(result *applicationrecommendation.ExposureDecisionResult) exposureDecisionsResponse {
+	items := make([]exposureDecisionItemResponse, 0, len(result.Decisions))
+	for _, decision := range result.Decisions {
+		items = append(items, exposureDecisionItemResponse{
+			VideoID:       decision.VideoID,
+			Allowed:       decision.Allowed,
+			Reason:        decision.Reason,
+			LastExposedAt: decision.LastExposedAt,
+		})
+	}
+	return exposureDecisionsResponse{
+		UserID:    result.UserID,
+		Scene:     result.Scene,
+		RequestID: result.RequestID,
+		Decisions: items,
+	}
 }

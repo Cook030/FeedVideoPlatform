@@ -3,11 +3,9 @@ package interfaceshttpmessage
 import (
 	applicationmessage "GCFeed/internal/application/message"
 	domainmessage "GCFeed/internal/domain/message"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	sharedhttputil "GCFeed/internal/shared/httputil"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,13 +21,13 @@ func New(service *applicationmessage.Service) *Handler {
 
 // List 查询当前登录用户的消息列表。
 func (h *Handler) List(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
 	}
 
-	limit, err := parseLimit(c.Query("limit"))
+	limit, err := sharedhttputil.ParseLimit(c.Query("limit"), domainmessage.ErrInvalidLimit)
 	if err != nil {
 		writeMessageError(c, err)
 		return
@@ -45,7 +43,7 @@ func (h *Handler) List(c *gin.Context) {
 
 // CountUnread 查询当前登录用户未读消息数。
 func (h *Handler) CountUnread(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
@@ -61,7 +59,7 @@ func (h *Handler) CountUnread(c *gin.Context) {
 
 // MarkRead 将当前登录用户的指定消息标记为已读。
 func (h *Handler) MarkRead(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
@@ -111,56 +109,6 @@ func (h *Handler) Create(c *gin.Context) {
 		status = http.StatusOK
 	}
 	c.JSON(status, responseFromDomain(result.Message))
-}
-
-func userIDFromContext(c *gin.Context) (int64, bool) {
-	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
-	if !exists {
-		return 0, false
-	}
-	userID, ok := value.(int64)
-	return userID, ok && userID > 0
-}
-
-func parseLimit(raw string) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	limit, err := strconv.Atoi(raw)
-	if err != nil || limit <= 0 {
-		return 0, domainmessage.ErrInvalidLimit
-	}
-	return limit, nil
-}
-
-func listResponseFromResult(result *applicationmessage.ListResult) messageListResponse {
-	items := make([]messageResponse, 0, len(result.Items))
-	for _, item := range result.Items {
-		items = append(items, responseFromDomain(item))
-	}
-	return messageListResponse{
-		Items:      items,
-		NextCursor: result.NextCursor,
-		HasMore:    result.HasMore,
-	}
-}
-
-func responseFromDomain(message *domainmessage.Message) messageResponse {
-	return messageResponse{
-		ID:             message.ID,
-		UserID:         message.UserID,
-		Type:           message.Type,
-		Title:          message.Title,
-		Content:        message.Content,
-		EventID:        message.EventID,
-		ActorID:        message.ActorID,
-		ActorNickname:  message.ActorNickname,
-		ActorAvatarURL: message.ActorAvatarURL,
-		IsRead:         message.IsRead,
-		CreatedAt:      message.CreatedAt,
-		ReadAt:         message.ReadAt,
-	}
 }
 
 func writeMessageError(c *gin.Context, err error) {

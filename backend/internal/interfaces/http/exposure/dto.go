@@ -1,6 +1,10 @@
 package interfaceshttpexposure
 
-import "time"
+import (
+	"time"
+
+	applicationexposure "GCFeed/internal/application/exposure"
+)
 
 // createViewEventRequest 是观看行为上报请求体。
 type createViewEventRequest struct {
@@ -39,4 +43,32 @@ type exposureResponse struct {
 type createViewEventResponse struct {
 	Event    viewEventResponse `json:"event"`
 	Exposure *exposureResponse `json:"exposure,omitempty"`
+}
+
+// responseFromResult 把观看行为上报结果转换为 HTTP 响应。
+func responseFromResult(result *applicationexposure.RecordViewEventResult) createViewEventResponse {
+	response := createViewEventResponse{
+		Event: viewEventResponse{
+			ID:        result.Event.ID,
+			UserID:    result.Event.UserID,
+			VideoID:   result.Event.VideoID,
+			Scene:     result.Event.Scene,
+			RequestID: result.Event.RequestID,
+			EventType: result.Event.EventType,
+			WatchMs:   result.Event.WatchMs,
+			Completed: result.Event.Completed,
+			CreatedAt: result.Event.CreatedAt,
+		},
+	}
+	if result.Exposure != nil {
+		response.Exposure = &exposureResponse{
+			UserID:         result.Exposure.UserID,
+			VideoID:        result.Exposure.VideoID,
+			FirstExposedAt: result.Exposure.FirstExposedAt,
+			LastExposedAt:  result.Exposure.LastExposedAt,
+			ExposureCount:  result.Exposure.ExposureCount,
+			LastScene:      result.Exposure.LastScene,
+		}
+	}
+	return response
 }

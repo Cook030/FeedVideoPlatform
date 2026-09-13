@@ -1,5 +1,7 @@
 package interfaceshttpaccount
 
+import applicationaccount "GCFeed/internal/application/account"
+
 // 账号注册请求
 type RegisterRequest struct {
 	Account  string `json:"account"`
@@ -50,4 +52,33 @@ type publicUserProfileResponse struct {
 	FollowingCount int    `json:"following_count"`
 	FollowerCount  int    `json:"follower_count"`
 	WorkCount      int    `json:"work_count"`
+}
+
+// publicProfileResponse 将应用层 Profile 转成公开 JSON 结构。
+func publicProfileResponse(profile *applicationaccount.Profile) publicUserProfileResponse {
+	return publicUserProfileResponse{
+		ID:             profile.ID,
+		Nickname:       profile.Nickname,
+		AvatarURL:      profile.AvatarURL,
+		Bio:            profile.Bio,
+		FollowingCount: profile.FollowingCount,
+		FollowerCount:  profile.FollowerCount,
+		WorkCount:      profile.WorkCount,
+	}
+}
+
+// profileResponse 将应用层 Profile 转成对外 JSON 结构。
+func profileResponse(profile *applicationaccount.Profile) userProfileResponse {
+	return userProfileResponse{
+		ID:             profile.ID,
+		Account:        profile.Account,
+		Nickname:       profile.Nickname,
+		AvatarURL:      profile.AvatarURL,
+		Bio:            profile.Bio,
+		Status:         profile.Status,
+		Role:           profile.Role,
+		FollowingCount: profile.FollowingCount,
+		FollowerCount:  profile.FollowerCount,
+		WorkCount:      profile.WorkCount,
+	}
 }

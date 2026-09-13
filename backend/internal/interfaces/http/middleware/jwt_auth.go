@@ -2,6 +2,7 @@ package interfaceshttpmiddleware
 
 import (
 	infrajwt "GCFeed/internal/infra/jwt"
+	sharedhttputil "GCFeed/internal/shared/httputil"
 	"crypto/subtle"
 	"net/http"
 	"strings"
@@ -9,9 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const ContextUserIDKey = "auth_user_id"
-const ContextRoleKey = "auth_role"
-const ContextTokenExpiresAtKey = "auth_token_expires_at"
+// 上下文键定义在 shared/httputil，这里保留同名常量作为别名，
+// 使中间件写入与既有调用方（含测试）无需改动，同时保持依赖单向。
+const ContextUserIDKey = sharedhttputil.ContextUserIDKey
+const ContextRoleKey = sharedhttputil.ContextRoleKey
+const ContextTokenExpiresAtKey = sharedhttputil.ContextTokenExpiresAtKey
 
 // NewJWTAuth 返回 Gin 鉴权中间件，负责解析 Bearer token 并写入用户上下文。
 func NewJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {

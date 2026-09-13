@@ -3,7 +3,7 @@ package interfaceshttpexposure
 import (
 	applicationexposure "GCFeed/internal/application/exposure"
 	domainexposure "GCFeed/internal/domain/exposure"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	sharedhttputil "GCFeed/internal/shared/httputil"
 	"errors"
 	"net/http"
 
@@ -21,7 +21,7 @@ func New(service *applicationexposure.Service) *Handler {
 
 // CreateViewEvent 处理视频曝光和观看行为上报。
 func (h *Handler) CreateViewEvent(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
@@ -49,42 +49,6 @@ func (h *Handler) CreateViewEvent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, responseFromResult(result))
-}
-
-func responseFromResult(result *applicationexposure.RecordViewEventResult) createViewEventResponse {
-	response := createViewEventResponse{
-		Event: viewEventResponse{
-			ID:        result.Event.ID,
-			UserID:    result.Event.UserID,
-			VideoID:   result.Event.VideoID,
-			Scene:     result.Event.Scene,
-			RequestID: result.Event.RequestID,
-			EventType: result.Event.EventType,
-			WatchMs:   result.Event.WatchMs,
-			Completed: result.Event.Completed,
-			CreatedAt: result.Event.CreatedAt,
-		},
-	}
-	if result.Exposure != nil {
-		response.Exposure = &exposureResponse{
-			UserID:         result.Exposure.UserID,
-			VideoID:        result.Exposure.VideoID,
-			FirstExposedAt: result.Exposure.FirstExposedAt,
-			LastExposedAt:  result.Exposure.LastExposedAt,
-			ExposureCount:  result.Exposure.ExposureCount,
-			LastScene:      result.Exposure.LastScene,
-		}
-	}
-	return response
-}
-
-func userIDFromContext(c *gin.Context) (int64, bool) {
-	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
-	if !exists {
-		return 0, false
-	}
-	userID, ok := value.(int64)
-	return userID, ok && userID > 0
 }
 
 func writeExposureError(c *gin.Context, err error) {

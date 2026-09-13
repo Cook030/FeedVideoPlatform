@@ -1,6 +1,11 @@
 package interfaceshttpmessage
 
-import "time"
+import (
+	"time"
+
+	applicationmessage "GCFeed/internal/application/message"
+	domainmessage "GCFeed/internal/domain/message"
+)
 
 type createMessageRequest struct {
 	UserID         int64  `json:"user_id"`
@@ -44,4 +49,35 @@ type unreadStatResponse struct {
 
 type markReadResponse struct {
 	UpdatedCount int `json:"updated_count"`
+}
+
+// listResponseFromResult 把应用层消息列表转换为 HTTP 响应。
+func listResponseFromResult(result *applicationmessage.ListResult) messageListResponse {
+	items := make([]messageResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, responseFromDomain(item))
+	}
+	return messageListResponse{
+		Items:      items,
+		NextCursor: result.NextCursor,
+		HasMore:    result.HasMore,
+	}
+}
+
+// responseFromDomain 把领域消息转换为 HTTP 响应。
+func responseFromDomain(message *domainmessage.Message) messageResponse {
+	return messageResponse{
+		ID:             message.ID,
+		UserID:         message.UserID,
+		Type:           message.Type,
+		Title:          message.Title,
+		Content:        message.Content,
+		EventID:        message.EventID,
+		ActorID:        message.ActorID,
+		ActorNickname:  message.ActorNickname,
+		ActorAvatarURL: message.ActorAvatarURL,
+		IsRead:         message.IsRead,
+		CreatedAt:      message.CreatedAt,
+		ReadAt:         message.ReadAt,
+	}
 }

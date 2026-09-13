@@ -3,11 +3,9 @@ package interfaceshttpaccount
 import (
 	applicationaccount "GCFeed/internal/application/account"
 	domainaccount "GCFeed/internal/domain/account"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	sharedhttputil "GCFeed/internal/shared/httputil"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -86,7 +84,7 @@ func (h *Handler) Logout(c *gin.Context) {
 
 // Me 读取当前登录用户资料，用户 ID 来自 JWT 中间件写入的上下文。
 func (h *Handler) Me(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
@@ -103,7 +101,7 @@ func (h *Handler) Me(c *gin.Context) {
 
 // Get 读取公开用户资料，用于访问他人主页。
 func (h *Handler) Get(c *gin.Context) {
-	userID, err := parsePositiveUserID(c.Param("userId"))
+	userID, err := sharedhttputil.ParsePositiveInt64(c.Param("userId"), domainaccount.ErrInvalidUserID)
 	if err != nil {
 		writeProfileError(c, err)
 		return
@@ -120,7 +118,7 @@ func (h *Handler) Get(c *gin.Context) {
 
 // UpdateMe 更新当前登录用户资料，请求体支持部分字段更新。
 func (h *Handler) UpdateMe(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
@@ -139,53 +137,6 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, profileResponse(profile))
-}
-
-// publicProfileResponse 将应用层 Profile 转成公开 JSON 结构。
-func publicProfileResponse(profile *applicationaccount.Profile) publicUserProfileResponse {
-	return publicUserProfileResponse{
-		ID:             profile.ID,
-		Nickname:       profile.Nickname,
-		AvatarURL:      profile.AvatarURL,
-		Bio:            profile.Bio,
-		FollowingCount: profile.FollowingCount,
-		FollowerCount:  profile.FollowerCount,
-		WorkCount:      profile.WorkCount,
-	}
-}
-
-// profileResponse 将应用层 Profile 转成对外 JSON 结构。
-func profileResponse(profile *applicationaccount.Profile) userProfileResponse {
-	return userProfileResponse{
-		ID:             profile.ID,
-		Account:        profile.Account,
-		Nickname:       profile.Nickname,
-		AvatarURL:      profile.AvatarURL,
-		Bio:            profile.Bio,
-		Status:         profile.Status,
-		Role:           profile.Role,
-		FollowingCount: profile.FollowingCount,
-		FollowerCount:  profile.FollowerCount,
-		WorkCount:      profile.WorkCount,
-	}
-}
-
-// userIDFromContext 从 JWT 中间件写入的上下文中读取登录用户 ID。
-func userIDFromContext(c *gin.Context) (int64, bool) {
-	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
-	if !exists {
-		return 0, false
-	}
-	userID, ok := value.(int64)
-	return userID, ok && userID > 0
-}
-
-func parsePositiveUserID(raw string) (int64, error) {
-	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	if err != nil || value <= 0 {
-		return 0, domainaccount.ErrInvalidUserID
-	}
-	return value, nil
 }
 
 // writeProfileError 统一账号资料相关接口的错误响应。

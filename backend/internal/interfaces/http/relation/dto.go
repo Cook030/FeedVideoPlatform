@@ -1,6 +1,10 @@
 package interfaceshttprelation
 
-import "time"
+import (
+	"time"
+
+	applicationrelation "GCFeed/internal/application/relation"
+)
 
 // followResponse 是关注或取关后的关系状态响应。
 type followResponse struct {
@@ -26,4 +30,35 @@ type relationListResponse struct {
 	Items      []relationUserResponse `json:"items"`
 	NextCursor string                 `json:"next_cursor"`
 	HasMore    bool                   `json:"has_more"`
+}
+
+// followResponseFromResult 把应用层关注结果转换为 HTTP 响应。
+func followResponseFromResult(result *applicationrelation.FollowResult) followResponse {
+	return followResponse{
+		UserID:         result.UserID,
+		TargetUserID:   result.TargetUserID,
+		Status:         result.Status,
+		Following:      result.Following,
+		FollowingCount: result.FollowingCount,
+		FollowerCount:  result.FollowerCount,
+	}
+}
+
+// relationListResponseFromResult 把应用层关系列表转换为 HTTP 响应。
+func relationListResponseFromResult(result *applicationrelation.ListResult) relationListResponse {
+	items := make([]relationUserResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, relationUserResponse{
+			UserID:     item.UserID,
+			Nickname:   item.Nickname,
+			AvatarURL:  item.AvatarURL,
+			Bio:        item.Bio,
+			FollowedAt: item.FollowedAt,
+		})
+	}
+	return relationListResponse{
+		Items:      items,
+		NextCursor: result.NextCursor,
+		HasMore:    result.HasMore,
+	}
 }

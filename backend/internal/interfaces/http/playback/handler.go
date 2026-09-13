@@ -3,11 +3,9 @@ package interfaceshttpplayback
 import (
 	applicationplayback "GCFeed/internal/application/playback"
 	domainplayback "GCFeed/internal/domain/playback"
-	interfaceshttpmiddleware "GCFeed/internal/interfaces/http/middleware"
+	sharedhttputil "GCFeed/internal/shared/httputil"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,12 +31,12 @@ func (h *Handler) GetConfig(c *gin.Context) {
 
 // ListPreloadVideos 查询 Feed 当前视频之后的预加载资源。
 func (h *Handler) ListPreloadVideos(c *gin.Context) {
-	currentVideoID, err := parseOptionalInt64(c.Query("current_video_id"))
+	currentVideoID, err := sharedhttputil.ParseOptionalInt64(c.Query("current_video_id"), domainplayback.ErrInvalidVideoID)
 	if err != nil {
 		writePlaybackError(c, domainplayback.ErrInvalidVideoID)
 		return
 	}
-	limit, err := parseLimit(c.Query("limit"))
+	limit, err := sharedhttputil.ParseLimit(c.Query("limit"), domainplayback.ErrInvalidLimit)
 	if err != nil {
 		writePlaybackError(c, err)
 		return
@@ -54,7 +52,7 @@ func (h *Handler) ListPreloadVideos(c *gin.Context) {
 
 // CreateQoSReport 处理 Web 客户端播放质量上报。
 func (h *Handler) CreateQoSReport(c *gin.Context) {
-	userID, ok := userIDFromContext(c)
+	userID, ok := sharedhttputil.UserIDFromContext(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
 		return
@@ -101,76 +99,6 @@ func (h *Handler) createQoSReportWithRequest(c *gin.Context, userID int64, req c
 		status = http.StatusOK
 	}
 	c.JSON(status, qosResponseFromResult(result))
-}
-
-func userIDFromContext(c *gin.Context) (int64, bool) {
-	value, exists := c.Get(interfaceshttpmiddleware.ContextUserIDKey)
-	if !exists {
-		return 0, false
-	}
-	userID, ok := value.(int64)
-	return userID, ok && userID > 0
-}
-
-func parseOptionalInt64(raw string) (int64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value < 0 {
-		return 0, domainplayback.ErrInvalidVideoID
-	}
-	return value, nil
-}
-
-func parseLimit(raw string) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	limit, err := strconv.Atoi(raw)
-	if err != nil || limit <= 0 {
-		return 0, domainplayback.ErrInvalidLimit
-	}
-	return limit, nil
-}
-
-func configResponseFromResult(result *applicationplayback.ConfigResult) playbackConfigResponse {
-	config := result.Config
-	return playbackConfigResponse{
-		ID:           config.ID,
-		Platform:     config.Platform,
-		NetworkType:  config.NetworkType,
-		PreloadCount: config.PreloadCount,
-		BufferMs:     config.BufferMs,
-		UpdatedAt:    config.UpdatedAt,
-	}
-}
-
-func preloadResponseFromResult(result *applicationplayback.PreloadResult) preloadVideosResponse {
-	items := make([]preloadVideoResponse, 0, len(result.Items))
-	for _, item := range result.Items {
-		items = append(items, preloadVideoResponse{
-			VideoID:  item.VideoID,
-			MediaURL: item.MediaURL,
-			CoverURL: item.CoverURL,
-		})
-	}
-	return preloadVideosResponse{Items: items}
-}
-
-func qosResponseFromResult(result *applicationplayback.QoSReportResult) qosReportResponse {
-	report := result.Report
-	return qosReportResponse{
-		ID:           report.ID,
-		UserID:       report.UserID,
-		VideoID:      report.VideoID,
-		FirstFrameMs: report.FirstFrameMs,
-		StutterCount: report.StutterCount,
-		WatchMs:      report.WatchMs,
-		CreatedAt:    report.CreatedAt,
-	}
 }
 
 func writePlaybackError(c *gin.Context, err error) {
