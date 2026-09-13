@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	// FollowStatusUnset 表示存储中还没有关注记录。
+	FollowStatusUnset    = 0
 	FollowStatusActive   = 1
 	FollowStatusCanceled = 2
 
@@ -129,6 +131,33 @@ func RestoreUserProfile(userID int64, nickname string, avatarURL string, bio str
 		AvatarURL: strings.TrimSpace(avatarURL),
 		Bio:       strings.TrimSpace(bio),
 	}
+}
+
+// StatusFromActive 把接口目标状态转换为存储状态枚举。
+func StatusFromActive(active bool) int {
+	if active {
+		return FollowStatusActive
+	}
+	return FollowStatusCanceled
+}
+
+// ResolveFollowDelta 计算关注状态迁移引起的计数增量。
+//
+// current 为已存状态（FollowStatusUnset 表示尚无记录），targetActive 为目标激活状态。
+func ResolveFollowDelta(current int, targetActive bool) int {
+	if current == FollowStatusUnset {
+		if targetActive {
+			return 1
+		}
+		return 0
+	}
+	if current == StatusFromActive(targetActive) {
+		return 0
+	}
+	if targetActive {
+		return 1
+	}
+	return -1
 }
 
 // Active 判断当前关系是否处于关注中。

@@ -1,6 +1,7 @@
 package domaininteraction
 
 import (
+	domainkernel "GCFeed/internal/domain/kernel"
 	"strings"
 	"time"
 )
@@ -9,6 +10,8 @@ const (
 	ActionTypeLike     = "LIKE"
 	ActionTypeFavorite = "FAVORITE"
 
+	// ActionStatusUnset 表示存储中还没有该行为的记录。
+	ActionStatusUnset    = 0
 	ActionStatusActive   = 1
 	ActionStatusCanceled = 2
 
@@ -74,6 +77,39 @@ func NormalizeActionType(value string) (string, error) {
 		return "", ErrInvalidActionType
 	}
 	return value, nil
+}
+
+// StatusFromActive 把接口目标状态转换为存储状态枚举。
+func StatusFromActive(active bool) int {
+	if active {
+		return ActionStatusActive
+	}
+	return ActionStatusCanceled
+}
+
+// ResolveActionDelta 计算点赞/收藏状态迁移引起的计数增量。
+//
+// current 为已存状态（ActionStatusUnset 表示尚无记录），targetActive 为目标激活状态。
+// 数据库与 Redis 两条写入路径都必须复用本函数，保证计数口径完全一致。
+func ResolveActionDelta(current int, targetActive bool) int {
+	if current == ActionStatusUnset {
+		if targetActive {
+			return 1
+		}
+		return 0
+	}
+	if current == StatusFromActive(targetActive) {
+		return 0
+	}
+	if targetActive {
+		return 1
+	}
+	return -1
+}
+
+// CanDeleteComment 判断操作者是否有权删除评论：评论作者、视频作者或管理员。
+func CanDeleteComment(actorID int64, commentOwnerID int64, videoAuthorID int64, role string) bool {
+	return actorID == commentOwnerID || actorID == videoAuthorID || role == domainkernel.RoleAdmin
 }
 
 // NewComment 创建评论领域对象，负责校验视频、用户、内容和幂等键。

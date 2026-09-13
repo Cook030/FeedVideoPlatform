@@ -1,15 +1,17 @@
 package domainexposure
 
 import (
+	domainkernel "GCFeed/internal/domain/kernel"
 	"strings"
 	"time"
 )
 
 const (
-	EventTypeExposed  = "exposed"
-	EventTypePlay     = "play"
-	EventTypeComplete = "complete"
-	EventTypeSkip     = "skip"
+	// 事件类型来自领域共享内核，供曝光与推荐上下文共同使用。
+	EventTypeExposed  = domainkernel.EventTypeExposed
+	EventTypePlay     = domainkernel.EventTypePlay
+	EventTypeComplete = domainkernel.EventTypeComplete
+	EventTypeSkip     = domainkernel.EventTypeSkip
 
 	MaxSceneLength     = 32
 	MaxRequestIDLength = 64

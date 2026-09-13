@@ -1,14 +1,14 @@
 package domainaccount
 
 import (
+	domainkernel "GCFeed/internal/domain/kernel"
 	"strings"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	RoleUser     = "user"
-	RoleAdmin    = "admin"
+	// 角色词汇来自领域共享内核，互动等上下文按同一口径判定。
+	RoleUser     = domainkernel.RoleUser
+	RoleAdmin    = domainkernel.RoleAdmin
 	StatusNormal = 1
 )
 
@@ -29,7 +29,8 @@ type User struct {
 }
 
 // New 创建新用户，负责输入清洗、必填校验和密码哈希。
-func New(account, password, nickname string) (*User, error) {
+// hasher 由装配层注入，领域层不绑定具体加密算法。
+func New(hasher PasswordHasher, account, password, nickname string) (*User, error) {
 	account = strings.TrimSpace(account)
 	password = strings.TrimSpace(password)
 	nickname = strings.TrimSpace(nickname)
@@ -43,16 +44,19 @@ func New(account, password, nickname string) (*User, error) {
 	if nickname == "" {
 		return nil, ErrEmptyNickname
 	}
+	if hasher == nil {
+		return nil, ErrHashPasswordFailed
+	}
 
-	// 密码只保存 bcrypt 哈希，数据库中不会保存明文密码。
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	// 密码只保存哈希，数据库中不会保存明文密码。
+	hashedPassword, err := hasher.Hash(password)
 	if err != nil {
 		return nil, ErrHashPasswordFailed
 	}
 
 	return &User{
 		Account:  account,
-		Password: string(hashedPassword),
+		Password: hashedPassword,
 		Nickname: nickname,
 		Status:   StatusNormal,
 		Role:     RoleUser,
@@ -95,13 +99,16 @@ func RestoreUserWithStats(id int64, account, password, nickname, avatarURL, bio 
 	}
 }
 
-// Authenticate 校验用户输入密码是否匹配已保存的 bcrypt 哈希。
-func (u *User) Authenticate(password string) error {
+// Authenticate 校验用户输入密码是否匹配已保存的密码哈希。
+func (u *User) Authenticate(hasher PasswordHasher, password string) error {
 	password = strings.TrimSpace(password)
 	if password == "" {
 		return ErrEmptyPassword
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
+	if hasher == nil {
+		return ErrInvalidCredentials
+	}
+	if err := hasher.Verify(u.Password, password); err != nil {
 		return ErrInvalidCredentials
 	}
 	return nil
