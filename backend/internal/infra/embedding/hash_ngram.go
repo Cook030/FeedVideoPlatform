@@ -15,7 +15,7 @@ type HashNgramVectorizer struct {
 	dimension int
 }
 
-// NewHashNgramVectorizer 创建默认 128 维 hash n-gram 向量器。
+// NewHashNgramVectorizer 创建当前版本的默认 128 维 hash n-gram 向量器。
 func NewHashNgramVectorizer() *HashNgramVectorizer {
 	return &HashNgramVectorizer{dimension: domainembedding.HashNgramDimension}
 }

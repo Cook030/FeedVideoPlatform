@@ -21,10 +21,10 @@ func NewPublishedEvent(video *domainvideo.Video) *PublishedEvent {
 		AuthorID:    video.AuthorID,
 		Title:       strings.TrimSpace(video.Title),
 		Description: strings.TrimSpace(video.Description),
+		Tags:        append([]string(nil), video.Tags...),
 		MediaURL:    strings.TrimSpace(video.MediaURL),
 		CoverURL:    strings.TrimSpace(video.CoverURL),
 		PublishedAt: video.PublishedAt.UTC(),
 		OccurredAt:  time.Now().UTC(),
 	}
 }
-

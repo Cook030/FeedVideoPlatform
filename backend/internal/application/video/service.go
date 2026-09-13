@@ -56,7 +56,7 @@ func WithCardInvalidator(invalidator FeedCacheInvalidator) Option {
 }
 
 // CreatePublished 创建已发布视频；Idempotency-Key 命中时返回已有视频。
-func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, description, mediaURL, coverURL, idempotencyKey string) (*CreateResult, error) {
+func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, description string, tags []string, mediaURL, coverURL, idempotencyKey string) (*CreateResult, error) {
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	if len(idempotencyKey) > domainvideo.MaxIdempotencyKeyLength {
 		return nil, domainvideo.ErrIdempotencyKeyTooLong
@@ -73,7 +73,7 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 		}
 	}
 
-	video, err := domainvideo.NewPublished(authorID, title, description, mediaURL, coverURL, idempotencyKey)
+	video, err := domainvideo.NewPublished(authorID, title, description, tags, mediaURL, coverURL, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}

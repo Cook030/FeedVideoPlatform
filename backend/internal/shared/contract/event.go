@@ -32,6 +32,7 @@ type PublishedEvent struct {
 	AuthorID    int64     `json:"author_id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
+	Tags        []string  `json:"tags,omitempty"`
 	MediaURL    string    `json:"media_url"`
 	CoverURL    string    `json:"cover_url"`
 	PublishedAt time.Time `json:"published_at"`

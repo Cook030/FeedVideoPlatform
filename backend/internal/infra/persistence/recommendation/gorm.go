@@ -27,8 +27,10 @@ type UserInterestCache interface {
 }
 
 type Repository struct {
-	db            *gorm.DB
-	interestCache UserInterestCache
+	db                 *gorm.DB
+	interestCache      UserInterestCache
+	embeddingModel     string
+	embeddingDimension int
 }
 
 type Option func(*Repository)
@@ -37,6 +39,16 @@ type Option func(*Repository)
 func WithUserInterestCache(cache UserInterestCache) Option {
 	return func(r *Repository) {
 		r.interestCache = cache
+	}
+}
+
+// WithEmbeddingSpec 指定推荐链路唯一可读取的视频向量版本与维度。
+func WithEmbeddingSpec(model string, dimension int) Option {
+	return func(r *Repository) {
+		if model != "" && dimension > 0 {
+			r.embeddingModel = model
+			r.embeddingDimension = dimension
+		}
 	}
 }
 
@@ -49,11 +61,16 @@ type candidateModel struct {
 
 type videoVectorModel struct {
 	VideoID       int64
+	Dimension     int
 	EmbeddingJSON string
 }
 
 func New(db *gorm.DB, options ...Option) *Repository {
-	repository := &Repository{db: db}
+	repository := &Repository{
+		db:                 db,
+		embeddingModel:     domainembedding.HashNgramModel,
+		embeddingDimension: domainembedding.HashNgramDimension,
+	}
 	for _, option := range options {
 		if option != nil {
 			option(repository)
@@ -129,8 +146,8 @@ func (r *Repository) LoadUserInterestVector(ctx context.Context, userID int64) (
 func (r *Repository) aggregateUserInterestVector(ctx context.Context, userID int64) ([]float64, float64, error) {
 	rows, err := r.db.WithContext(ctx).
 		Table("video_view_events AS ev").
-		Select("ve.embedding_json, ev.event_type, ev.watch_ms, ev.completed").
-		Joins("JOIN video_embedding AS ve ON ve.video_id = ev.video_id AND ve.model = ?", domainembedding.HashNgramModel).
+		Select("ve.dimension, ve.embedding_json, ev.event_type, ev.watch_ms, ev.completed").
+		Joins("JOIN video_embedding AS ve ON ve.video_id = ev.video_id AND ve.model = ? AND ve.dimension = ?", r.embeddingModel, r.embeddingDimension).
 		Where("ev.user_id = ? AND ev.created_at >= ? AND ev.event_type IN ?", userID, time.Now().Add(-domainrecommendation.PositiveEventWindow), positiveEventTypes()).
 		Order("ev.created_at DESC").
 		Limit(200).
@@ -143,15 +160,16 @@ func (r *Repository) aggregateUserInterestVector(ctx context.Context, userID int
 	var sum []float64
 	var totalWeight float64
 	for rows.Next() {
+		var dimension int
 		var embeddingJSON string
 		var eventType string
 		var watchMs int
 		var completed bool
-		if err := rows.Scan(&embeddingJSON, &eventType, &watchMs, &completed); err != nil {
+		if err := rows.Scan(&dimension, &embeddingJSON, &eventType, &watchMs, &completed); err != nil {
 			return nil, 0, err
 		}
 		vector, err := decodeVector(embeddingJSON)
-		if err != nil || len(vector) == 0 {
+		if err != nil || dimension != r.embeddingDimension || len(vector) != dimension {
 			continue
 		}
 		if len(sum) == 0 {
@@ -204,8 +222,8 @@ func (r *Repository) LoadVideoVectors(ctx context.Context, videoIDs []int64) (ma
 	var models []videoVectorModel
 	err := r.db.WithContext(ctx).
 		Table("video_embedding").
-		Select("video_id, embedding_json").
-		Where("video_id IN ? AND model = ?", videoIDs, domainembedding.HashNgramModel).
+		Select("video_id, dimension, embedding_json").
+		Where("video_id IN ? AND model = ? AND dimension = ?", videoIDs, r.embeddingModel, r.embeddingDimension).
 		Scan(&models).
 		Error
 	if err != nil {
@@ -213,7 +231,7 @@ func (r *Repository) LoadVideoVectors(ctx context.Context, videoIDs []int64) (ma
 	}
 	for _, model := range models {
 		vector, err := decodeVector(model.EmbeddingJSON)
-		if err != nil {
+		if err != nil || model.Dimension != r.embeddingDimension || len(vector) != model.Dimension {
 			continue
 		}
 		vectors[model.VideoID] = vector

@@ -2159,7 +2159,8 @@ function WorkViewer({ video, onClose }) {
 function UploadPage({ session, onNavigate }) {
   const [form, setForm] = useState({
     title: "",
-    description: ""
+    description: "",
+    tags: ""
   });
   const [videoFile, setVideoFile] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
@@ -2182,6 +2183,13 @@ function UploadPage({ session, onNavigate }) {
     setSubmitting(true);
     setStatus("");
     try {
+      const tags = parseVideoTags(form.tags);
+      if (tags.length > 10) {
+        throw new Error("标签不能超过 10 个");
+      }
+      if (tags.some((tag) => [...tag].length > 32)) {
+        throw new Error("单个标签不能超过 32 个字符");
+      }
       if (!videoFile) {
         throw new Error("请选择视频文件");
       }
@@ -2201,6 +2209,7 @@ function UploadPage({ session, onNavigate }) {
         body: {
           title: form.title.trim(),
           description: form.description.trim(),
+          tags,
           media_url: videoUpload.url,
           cover_url: coverUpload.url
         }
@@ -2265,6 +2274,15 @@ function UploadPage({ session, onNavigate }) {
               />
             </label>
             <label>
+              <span>标签</span>
+              <input
+                value={form.tags}
+                onChange={(event) => setForm({ ...form, tags: event.target.value })}
+                placeholder="例如：篮球，教学，训练"
+              />
+              <small>使用逗号分隔，最多 10 个标签，每个不超过 32 个字符。</small>
+            </label>
+            <label>
               <span>视频</span>
               <span className="file-picker">
                 <span className="material-symbols-outlined">movie</span>
@@ -2306,6 +2324,15 @@ function UploadPage({ session, onNavigate }) {
       </section>
     </main>
   );
+}
+
+function parseVideoTags(value) {
+  return [...new Set(
+    String(value || "")
+      .split(/[,，]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+  )];
 }
 
 function normalizeRoute(pathname) {

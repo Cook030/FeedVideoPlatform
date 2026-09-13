@@ -11,7 +11,7 @@ import (
 )
 
 const userInterestTTL = 30 * time.Minute
-const userInterestKeyPrefix = "rec:user_interest:v1:"
+const userInterestKeyPrefix = "rec:user_interest:v2:"
 
 type redisUserInterestClient interface {
 	Get(ctx context.Context, key string) *redis.StringCmd
@@ -33,12 +33,14 @@ type userInterestSnapshot struct {
 // 这里采用 cache-aside：未命中时回源聚合并回填，之后由观看行为事件做增量修正，
 // TTL 到期后自然重建，避免增量长期漂移。缓存只影响性能，缺失时行为与回源一致。
 type UserInterestCache struct {
-	client redisUserInterestClient
+	client    redisUserInterestClient
+	model     string
+	dimension int
 }
 
 // NewUserInterestCache 创建用户兴趣向量缓存。
-func NewUserInterestCache(client redisUserInterestClient) *UserInterestCache {
-	return &UserInterestCache{client: client}
+func NewUserInterestCache(client redisUserInterestClient, model string, dimension int) *UserInterestCache {
+	return &UserInterestCache{client: client, model: model, dimension: dimension}
 }
 
 // Load 读取用户兴趣向量，第二个返回值表示是否命中缓存。
@@ -46,7 +48,8 @@ func (c *UserInterestCache) Load(ctx context.Context, userID int64) ([]float64, 
 	if c == nil || c.client == nil || userID <= 0 {
 		return nil, false, nil
 	}
-	content, err := c.client.Get(ctx, userInterestKey(userID)).Bytes()
+	key := c.userInterestKey(userID)
+	content, err := c.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
 		inframetrics.ObserveCacheRead("user_interest", 1, 0, nil)
 		return nil, false, nil
@@ -58,11 +61,13 @@ func (c *UserInterestCache) Load(ctx context.Context, userID int64) ([]float64, 
 
 	var snapshot userInterestSnapshot
 	if err := json.Unmarshal(content, &snapshot); err != nil {
+		_ = c.client.Del(ctx, key).Err()
 		inframetrics.ObserveCacheRead("user_interest", 1, 0, err)
-		return nil, false, err
+		return nil, false, nil
 	}
-	vector := snapshot.vector()
+	vector := snapshot.vector(c.dimension)
 	if len(vector) == 0 {
+		_ = c.client.Del(ctx, key).Err()
 		inframetrics.ObserveCacheRead("user_interest", 1, 0, nil)
 		return nil, false, nil
 	}
@@ -72,7 +77,7 @@ func (c *UserInterestCache) Load(ctx context.Context, userID int64) ([]float64, 
 
 // Store 写入回源聚合得到的全量基线，vector 为归一化向量，weight 为其累计权重。
 func (c *UserInterestCache) Store(ctx context.Context, userID int64, vector []float64, weight float64) error {
-	if c == nil || c.client == nil || userID <= 0 || len(vector) == 0 || weight <= 0 {
+	if c == nil || c.client == nil || userID <= 0 || len(vector) != c.dimension || weight <= 0 {
 		return nil
 	}
 	sum := make([]float64, len(vector))
@@ -90,7 +95,11 @@ func (c *UserInterestCache) Apply(ctx context.Context, userID int64, videoVector
 	if c == nil || c.client == nil || userID <= 0 || len(videoVector) == 0 || weight <= 0 {
 		return nil
 	}
-	content, err := c.client.Get(ctx, userInterestKey(userID)).Bytes()
+	if len(videoVector) != c.dimension {
+		return c.Invalidate(ctx, userID)
+	}
+	key := c.userInterestKey(userID)
+	content, err := c.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
 		return nil
 	}
@@ -100,11 +109,12 @@ func (c *UserInterestCache) Apply(ctx context.Context, userID int64, videoVector
 
 	var snapshot userInterestSnapshot
 	if err := json.Unmarshal(content, &snapshot); err != nil {
-		return err
-	}
-	// 向量维度变化（模型升级）时放弃增量，等 TTL 或下次回源重建。
-	if snapshot.Dimension != len(videoVector) || snapshot.Weight <= 0 {
+		_ = c.client.Del(ctx, key).Err()
 		return nil
+	}
+	// 快照不属于当前维度时立即作废，下次推荐请求会回源重建。
+	if snapshot.Dimension != c.dimension || snapshot.Dimension != len(videoVector) || snapshot.Weight <= 0 || len(snapshot.Sum) != c.dimension {
+		return c.Invalidate(ctx, userID)
 	}
 	for i := range videoVector {
 		snapshot.Sum[i] += videoVector[i] * weight
@@ -120,7 +130,7 @@ func (c *UserInterestCache) Invalidate(ctx context.Context, userID int64) error 
 	if c == nil || c.client == nil || userID <= 0 {
 		return nil
 	}
-	return c.client.Del(ctx, userInterestKey(userID)).Err()
+	return c.client.Del(ctx, c.userInterestKey(userID)).Err()
 }
 
 func (c *UserInterestCache) write(ctx context.Context, userID int64, snapshot userInterestSnapshot, onlyIfExists bool) error {
@@ -132,11 +142,11 @@ func (c *UserInterestCache) write(ctx context.Context, userID int64, snapshot us
 	if onlyIfExists {
 		args.Mode = "XX"
 	}
-	return c.client.SetArgs(ctx, userInterestKey(userID), content, args).Err()
+	return c.client.SetArgs(ctx, c.userInterestKey(userID), content, args).Err()
 }
 
-func (s userInterestSnapshot) vector() []float64 {
-	if s.Weight <= 0 || len(s.Sum) == 0 || s.Dimension != len(s.Sum) {
+func (s userInterestSnapshot) vector(expectedDimension int) []float64 {
+	if s.Weight <= 0 || expectedDimension <= 0 || s.Dimension != expectedDimension || len(s.Sum) != expectedDimension {
 		return nil
 	}
 	vector := make([]float64, len(s.Sum))
@@ -146,6 +156,6 @@ func (s userInterestSnapshot) vector() []float64 {
 	return vector
 }
 
-func userInterestKey(userID int64) string {
-	return fmt.Sprintf("%s%d", userInterestKeyPrefix, userID)
+func (c *UserInterestCache) userInterestKey(userID int64) string {
+	return fmt.Sprintf("%s%s:%d:%d", userInterestKeyPrefix, c.model, c.dimension, userID)
 }

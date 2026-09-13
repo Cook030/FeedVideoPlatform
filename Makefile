@@ -1,6 +1,6 @@
 # GCFeed 命令入口。
 
-.PHONY: help up down logs ps test fmt build-api build-web clean
+.PHONY: help up down logs ps test fmt build-api build-web rebuild-embeddings clean
 
 help:
 	@echo 可用命令：
@@ -12,6 +12,7 @@ help:
 	@echo   make fmt        格式化后端代码
 	@echo   make build-api  本地编译后端
 	@echo   make build-web  前端生产构建
+	@echo   make rebuild-embeddings  重算当前模型的视频向量
 	@echo   make clean      停止并清理数据卷
 
 up:
@@ -37,6 +38,9 @@ build-api:
 
 build-web:
 	npm --prefix frontend run build
+
+rebuild-embeddings:
+	cd backend && go run ./cmd/rebuild-embeddings
 
 clean:
 	docker compose down -v

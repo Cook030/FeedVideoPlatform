@@ -4,13 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
 
 // Hash n-gram 模型的标识与维度。
 // 常量留在领域层，供基础设施实现与测试共同引用。
-const HashNgramModel = "hash-ngram-v1"
+const HashNgramModel = "hash-ngram-v2"
 const HashNgramDimension = 128
 
 // VideoEmbedding 保存一个视频文本内容对应的向量。
@@ -25,17 +26,37 @@ type VideoEmbedding struct {
 	UpdatedAt     time.Time
 }
 
-// BuildVideoText 把视频标题和简介拼成稳定向量输入。
-func BuildVideoText(title string, description string) string {
+// BuildVideoText 把视频标题、简介和标签拼成稳定向量输入。
+func BuildVideoText(title string, description string, tags []string) string {
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
-	if description == "" {
-		return title
+	parts := make([]string, 0, 2+len(tags))
+	if title != "" {
+		parts = append(parts, title)
 	}
-	if title == "" {
-		return description
+	if description != "" {
+		parts = append(parts, description)
 	}
-	return title + "\n" + description
+	parts = append(parts, normalizeTags(tags)...)
+	return strings.Join(parts, "\n")
+}
+
+func normalizeTags(tags []string) []string {
+	normalized := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, value := range tags {
+		tag := strings.TrimSpace(value)
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		normalized = append(normalized, tag)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 // TextHash 计算文本哈希，方便重复发布事件判断内容是否变化。

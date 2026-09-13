@@ -34,6 +34,7 @@ func autoMigrateModels(db *gorm.DB) error {
 			&infraaccount.UserModel{},
 			&infraembedding.VideoEmbeddingModel{},
 			&infravideo.VideoModel{},
+			&infravideo.VideoTagModel{},
 			&infravideo.VideoStatModel{},
 			&infrafeed.InboxModel{},
 			&infraexposure.ViewEventModel{},

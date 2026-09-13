@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ type videoAPIResponse struct {
 	AuthorID      int64      `json:"author_id"`
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
+	Tags          []string   `json:"tags"`
 	MediaURL      string     `json:"media_url"`
 	CoverURL      string     `json:"cover_url"`
 	Status        int        `json:"status"`
@@ -183,6 +185,17 @@ func (p *memoryVideoPublisher) EventCount() int {
 	return len(p.events)
 }
 
+func (p *memoryVideoPublisher) LatestEvent() *applicationvideo.PublishedEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.events) == 0 {
+		return nil
+	}
+	event := *p.events[len(p.events)-1]
+	event.Tags = append([]string(nil), event.Tags...)
+	return &event
+}
+
 // TestVideoAPIFlow 覆盖视频发布、幂等重放、详情、列表、删除和重复删除。
 func TestVideoAPIFlow(t *testing.T) {
 	router, jwtManager := newVideoRouter(t)
@@ -192,7 +205,7 @@ func TestVideoAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/videos",
-		`{"title":"first video","description":"hello timeline","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
+		`{"title":"first video","description":"hello timeline","tags":[" 篮球 ","教学","篮球",""],"media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
 		token,
 		"create-video-1",
 	)
@@ -206,12 +219,15 @@ func TestVideoAPIFlow(t *testing.T) {
 	if created.Title != "first video" || created.Description != "hello timeline" || created.MediaURL == "" || created.CoverURL == "" || created.PublishedAt == nil {
 		t.Fatalf("unexpected create response: %+v", created)
 	}
+	if !reflect.DeepEqual(created.Tags, []string{"教学", "篮球"}) {
+		t.Fatalf("unexpected normalized tags: %+v", created.Tags)
+	}
 
 	replayResponse := performVideoJSONRequest(
 		router,
 		http.MethodPost,
 		"/api/videos",
-		`{"title":"changed title","description":"changed description","media_url":"https://example.com/changed.mp4","cover_url":"https://example.com/changed.jpg"}`,
+		`{"title":"changed title","description":"changed description","tags":["changed"],"media_url":"https://example.com/changed.mp4","cover_url":"https://example.com/changed.jpg"}`,
 		token,
 		"create-video-1",
 	)
@@ -219,7 +235,7 @@ func TestVideoAPIFlow(t *testing.T) {
 
 	var replayed videoAPIResponse
 	decodeJSON(t, replayResponse, &replayed)
-	if replayed.ID != created.ID || replayed.Title != created.Title {
+	if replayed.ID != created.ID || replayed.Title != created.Title || !reflect.DeepEqual(replayed.Tags, created.Tags) {
 		t.Fatalf("unexpected replay response: %+v", replayed)
 	}
 
@@ -272,13 +288,16 @@ func TestVideoPublishedEvent(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/videos",
-		`{"title":"event video","description":"event description","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
+		`{"title":"event video","description":"event description","tags":["旅行","城市"],"media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
 		token,
 		"create-video-event",
 	)
 	requireStatus(t, createResponse, http.StatusCreated)
 	if publisher.EventCount() != 1 {
 		t.Fatalf("unexpected published event count after create: %d", publisher.EventCount())
+	}
+	if event := publisher.LatestEvent(); event == nil || !reflect.DeepEqual(event.Tags, []string{"城市", "旅行"}) {
+		t.Fatalf("unexpected published event: %+v", event)
 	}
 
 	replayResponse := performVideoJSONRequest(
@@ -317,6 +336,15 @@ func TestVideoAPIValidation(t *testing.T) {
 		token,
 	)
 	requireStatus(t, emptyTitleResponse, http.StatusBadRequest)
+
+	tooManyTagsResponse := performJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/videos",
+		`{"title":"tagged","tags":["1","2","3","4","5","6","7","8","9","10","11"],"media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
+		token,
+	)
+	requireStatus(t, tooManyTagsResponse, http.StatusBadRequest)
 
 	badIDResponse := performJSONRequest(router, http.MethodGet, "/api/videos/abc", "", "")
 	requireStatus(t, badIDResponse, http.StatusBadRequest)
@@ -417,6 +445,7 @@ func performVideoJSONRequest(router *gin.Engine, method, path, body, accessToken
 // cloneVideo 返回视频副本，并复制发布时间指针指向的值。
 func cloneVideo(video *domainvideo.Video) *domainvideo.Video {
 	cloned := *video
+	cloned.Tags = append([]string(nil), video.Tags...)
 	if video.PublishedAt != nil {
 		publishedAt := *video.PublishedAt
 		cloned.PublishedAt = &publishedAt

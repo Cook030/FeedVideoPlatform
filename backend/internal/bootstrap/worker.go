@@ -9,6 +9,7 @@ import (
 	applicationinteraction "GCFeed/internal/application/interaction"
 	applicationrecommendation "GCFeed/internal/application/recommendation"
 	applicationvideo "GCFeed/internal/application/video"
+	domainembedding "GCFeed/internal/domain/embedding"
 	infracache "GCFeed/internal/infra/cache"
 	infraconfig "GCFeed/internal/infra/config"
 	infradatabase "GCFeed/internal/infra/database"
@@ -88,8 +89,12 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 	}
 
 	// 观看行为事件消费链路。
-	interestCache := infracache.NewUserInterestCache(redisClient)
-	recommendationRepo := infrarecommendation.New(gormDB, infrarecommendation.WithUserInterestCache(interestCache))
+	interestCache := infracache.NewUserInterestCache(redisClient, domainembedding.HashNgramModel, domainembedding.HashNgramDimension)
+	recommendationRepo := infrarecommendation.New(
+		gormDB,
+		infrarecommendation.WithEmbeddingSpec(domainembedding.HashNgramModel, domainembedding.HashNgramDimension),
+		infrarecommendation.WithUserInterestCache(interestCache),
+	)
 	recommendationService := applicationrecommendation.New(recommendationRepo)
 	// 兴趣向量是幂等累加，重投会重复累加，因此按观看记录 ID 做事件级去重。
 	eventDedupCache := infracache.NewEventDedupCache(redisClient)

@@ -80,6 +80,15 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 		if err := tx.Create(&stat).Error; err != nil {
 			return err
 		}
+		if len(video.Tags) > 0 {
+			tags := make([]VideoTagModel, 0, len(video.Tags))
+			for _, tag := range video.Tags {
+				tags = append(tags, VideoTagModel{VideoID: model.ID, Tag: tag})
+			}
+			if err := tx.Create(&tags).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -109,7 +118,11 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainvideo.Video
 		}
 		return nil, err
 	}
-	return restoreVideo(model), nil
+	video := restoreVideo(model)
+	if err := r.loadTags(ctx, []*domainvideo.Video{video}); err != nil {
+		return nil, err
+	}
+	return video, nil
 }
 
 // FindByIDAnyStatus 查询任意状态视频，供作者删除等内部流程使用。
@@ -128,7 +141,11 @@ func (r *Repository) FindByIDAnyStatus(ctx context.Context, id int64) (*domainvi
 		}
 		return nil, err
 	}
-	return restoreVideo(model), nil
+	video := restoreVideo(model)
+	if err := r.loadTags(ctx, []*domainvideo.Video{video}); err != nil {
+		return nil, err
+	}
+	return video, nil
 }
 
 // FindByAuthorAndIdempotencyKey 根据作者和幂等键查找已创建视频。
@@ -151,7 +168,11 @@ func (r *Repository) FindByAuthorAndIdempotencyKey(ctx context.Context, authorID
 		}
 		return nil, err
 	}
-	return restoreVideo(model), nil
+	video := restoreVideo(model)
+	if err := r.loadTags(ctx, []*domainvideo.Video{video}); err != nil {
+		return nil, err
+	}
+	return video, nil
 }
 
 // ListByAuthor 按发布时间倒序返回作者已发布视频。
@@ -177,7 +198,43 @@ func (r *Repository) ListByAuthor(ctx context.Context, authorID int64, limit, of
 		// 查询模型逐条恢复为领域对象，应用层无需知道数据库联表细节。
 		videos = append(videos, restoreVideo(model))
 	}
+	if err := r.loadTags(ctx, videos); err != nil {
+		return nil, err
+	}
 	return videos, nil
+}
+
+func (r *Repository) loadTags(ctx context.Context, videos []*domainvideo.Video) error {
+	if len(videos) == 0 {
+		return nil
+	}
+	videoByID := make(map[int64]*domainvideo.Video, len(videos))
+	videoIDs := make([]int64, 0, len(videos))
+	for _, video := range videos {
+		if video == nil || video.ID <= 0 {
+			continue
+		}
+		video.Tags = []string{}
+		videoByID[video.ID] = video
+		videoIDs = append(videoIDs, video.ID)
+	}
+	if len(videoIDs) == 0 {
+		return nil
+	}
+	var tags []VideoTagModel
+	if err := r.db.WithContext(ctx).
+		Where("video_id IN ?", videoIDs).
+		Order("video_id ASC").
+		Order("tag ASC").
+		Find(&tags).Error; err != nil {
+		return err
+	}
+	for _, item := range tags {
+		if video := videoByID[item.VideoID]; video != nil {
+			video.Tags = append(video.Tags, item.Tag)
+		}
+	}
+	return nil
 }
 
 // UpdateStatus 只更新状态字段，用于软删除。
@@ -202,6 +259,7 @@ func restoreVideo(model videoWithStatModel) *domainvideo.Video {
 		model.AuthorID,
 		model.Title,
 		model.Description,
+		nil,
 		model.MediaURL,
 		model.CoverURL,
 		model.Status,

@@ -11,10 +11,61 @@ import (
 var ErrSaveVideoEmbeddingFailed = errors.New("failed to save video embedding")
 var ErrMarshalEmbeddingFailed = errors.New("failed to marshal embedding")
 var ErrVectorizerUnavailable = errors.New("embedding vectorizer is unavailable")
+var ErrLoadVideoTextsFailed = errors.New("failed to load video texts")
+var ErrInvalidVideoTextPage = errors.New("invalid video text page")
 
 type Service struct {
 	repo       domainembedding.Repository
 	vectorizer domainembedding.Vectorizer
+}
+
+// RebuildPublishedVideos 分页重算全部已发布视频的当前模型向量。
+// SaveVideoEmbedding 使用 video_id + model upsert，因此命令可安全重复执行。
+func (s *Service) RebuildPublishedVideos(ctx context.Context, source domainembedding.VideoTextSource, batchSize int) (int, error) {
+	if source == nil {
+		return 0, ErrLoadVideoTextsFailed
+	}
+	if batchSize <= 0 {
+		batchSize = 200
+	}
+
+	afterVideoID := int64(0)
+	rebuilt := 0
+	for {
+		items, err := source.ListPublishedVideoTexts(ctx, afterVideoID, batchSize)
+		if err != nil {
+			return rebuilt, ErrLoadVideoTextsFailed
+		}
+		if len(items) == 0 {
+			return rebuilt, nil
+		}
+
+		lastVideoID := afterVideoID
+		for _, item := range items {
+			if item == nil || item.VideoID <= afterVideoID {
+				continue
+			}
+			if _, err := s.GenerateForPublishedVideo(ctx, &contract.PublishedEvent{
+				VideoID:     item.VideoID,
+				Title:       item.Title,
+				Description: item.Description,
+				Tags:        item.Tags,
+			}); err != nil {
+				return rebuilt, err
+			}
+			rebuilt++
+			if item.VideoID > lastVideoID {
+				lastVideoID = item.VideoID
+			}
+		}
+		if lastVideoID == afterVideoID {
+			return rebuilt, ErrInvalidVideoTextPage
+		}
+		afterVideoID = lastVideoID
+		if len(items) < batchSize {
+			return rebuilt, nil
+		}
+	}
 }
 
 type GenerateVideoEmbeddingResult struct {
@@ -39,8 +90,11 @@ func (s *Service) GenerateForPublishedVideo(ctx context.Context, event *contract
 		return nil, ErrVectorizerUnavailable
 	}
 
-	text := domainembedding.BuildVideoText(event.Title, event.Description)
+	text := domainembedding.BuildVideoText(event.Title, event.Description, event.Tags)
 	vector := s.vectorizer.Vectorize(text)
+	if len(vector) != s.vectorizer.Dimension() {
+		return nil, domainembedding.ErrDimensionMismatch
+	}
 	content, err := json.Marshal(vector)
 	if err != nil {
 		return nil, ErrMarshalEmbeddingFailed

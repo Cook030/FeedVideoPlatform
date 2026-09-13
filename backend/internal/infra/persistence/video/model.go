@@ -23,6 +23,16 @@ func (VideoModel) TableName() string {
 	return "video"
 }
 
+// VideoTagModel 映射 video_tag 表；标签是视频聚合内的轻量字符串集合。
+type VideoTagModel struct {
+	VideoID int64  `gorm:"column:video_id;primaryKey;autoIncrement:false"`
+	Tag     string `gorm:"column:tag;type:varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;primaryKey"`
+}
+
+func (VideoTagModel) TableName() string {
+	return "video_tag"
+}
+
 // VideoStatModel 映射 video_stat 表，保存可频繁变更的互动计数。
 type VideoStatModel struct {
 	VideoID       int64     `gorm:"column:video_id;primaryKey"`

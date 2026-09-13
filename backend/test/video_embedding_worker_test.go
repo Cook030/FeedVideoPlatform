@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -15,6 +16,16 @@ import (
 type memoryVideoEmbeddingRepo struct {
 	items map[string]*domainembedding.VideoEmbedding
 }
+
+type memoryVideoTextSource struct {
+	items []*domainembedding.VideoText
+}
+
+type mismatchedVectorizer struct{}
+
+func (mismatchedVectorizer) Model() string              { return "broken" }
+func (mismatchedVectorizer) Dimension() int             { return 2 }
+func (mismatchedVectorizer) Vectorize(string) []float64 { return []float64{1} }
 
 func newMemoryVideoEmbeddingRepo() *memoryVideoEmbeddingRepo {
 	return &memoryVideoEmbeddingRepo{items: map[string]*domainembedding.VideoEmbedding{}}
@@ -33,6 +44,20 @@ func (r *memoryVideoEmbeddingRepo) FindVideoEmbedding(ctx context.Context, video
 	return cloneVideoEmbedding(item), nil
 }
 
+func (s *memoryVideoTextSource) ListPublishedVideoTexts(ctx context.Context, afterVideoID int64, limit int) ([]*domainembedding.VideoText, error) {
+	items := make([]*domainembedding.VideoText, 0, limit)
+	for _, item := range s.items {
+		if item.VideoID <= afterVideoID {
+			continue
+		}
+		items = append(items, item)
+		if len(items) == limit {
+			break
+		}
+	}
+	return items, nil
+}
+
 func TestVideoEmbeddingWorkerWritesEmbedding(t *testing.T) {
 	repo := newMemoryVideoEmbeddingRepo()
 	service := applicationembedding.New(repo, infravector.NewHashNgramVectorizer())
@@ -43,6 +68,7 @@ func TestVideoEmbeddingWorkerWritesEmbedding(t *testing.T) {
 		AuthorID:    42,
 		Title:       "篮球训练",
 		Description: "投篮技巧",
+		Tags:        []string{"篮球", "教学"},
 		PublishedAt: time.Now(),
 	}
 	if err := worker.HandleVideoPublished(context.Background(), event); err != nil {
@@ -56,7 +82,7 @@ func TestVideoEmbeddingWorkerWritesEmbedding(t *testing.T) {
 	if embedding.VideoID != 1001 || embedding.Model != domainembedding.HashNgramModel || embedding.Dimension != domainembedding.HashNgramDimension {
 		t.Fatalf("unexpected embedding metadata: %+v", embedding)
 	}
-	if embedding.TextHash != domainembedding.TextHash("篮球训练\n投篮技巧") {
+	if embedding.TextHash != domainembedding.TextHash("篮球训练\n投篮技巧\n教学\n篮球") {
 		t.Fatalf("unexpected text hash: %s", embedding.TextHash)
 	}
 	if embedding.EmbeddingJSON == "" || len(embedding.Embedding) != domainembedding.HashNgramDimension {
@@ -104,6 +130,43 @@ func TestVideoEmbeddingWorkerUpdatesByVideoAndModel(t *testing.T) {
 	}
 	if firstEmbedding.TextHash == secondEmbedding.TextHash {
 		t.Fatalf("embedding was not updated")
+	}
+}
+
+func TestRebuildPublishedVideosBatchesAndIncludesTags(t *testing.T) {
+	repo := newMemoryVideoEmbeddingRepo()
+	service := applicationembedding.New(repo, infravector.NewHashNgramVectorizer())
+	source := &memoryVideoTextSource{items: []*domainembedding.VideoText{
+		{VideoID: 1, Title: "篮球训练", Description: "投篮技巧", Tags: []string{"篮球", "教学"}},
+		{VideoID: 2, Title: "城市漫步", Tags: []string{"旅行"}},
+		{VideoID: 3, Title: "火锅探店", Tags: []string{"美食"}},
+	}}
+
+	rebuilt, err := service.RebuildPublishedVideos(context.Background(), source, 2)
+	if err != nil {
+		t.Fatalf("rebuild published videos: %v", err)
+	}
+	if rebuilt != 3 || len(repo.items) != 3 {
+		t.Fatalf("unexpected rebuild result: rebuilt=%d stored=%d", rebuilt, len(repo.items))
+	}
+	first, err := repo.FindVideoEmbedding(context.Background(), 1, domainembedding.HashNgramModel)
+	if err != nil {
+		t.Fatalf("find rebuilt embedding: %v", err)
+	}
+	wantText := domainembedding.BuildVideoText("篮球训练", "投篮技巧", []string{"篮球", "教学"})
+	if first.TextHash != domainembedding.TextHash(wantText) {
+		t.Fatalf("rebuilt embedding omitted tags: %+v", first)
+	}
+}
+
+func TestGenerateVideoEmbeddingRejectsVectorizerDimensionMismatch(t *testing.T) {
+	service := applicationembedding.New(newMemoryVideoEmbeddingRepo(), mismatchedVectorizer{})
+	_, err := service.GenerateForPublishedVideo(context.Background(), &applicationvideo.PublishedEvent{
+		VideoID: 1,
+		Title:   "broken vector",
+	})
+	if !errors.Is(err, domainembedding.ErrDimensionMismatch) {
+		t.Fatalf("expected dimension mismatch, got %v", err)
 	}
 }
 

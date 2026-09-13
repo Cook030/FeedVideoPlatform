@@ -1,8 +1,10 @@
 package domainvideo
 
 import (
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -13,6 +15,8 @@ const (
 
 	MaxTitleLength          = 128
 	MaxDescriptionLength    = 512
+	MaxTagCount             = 10
+	MaxTagLength            = 32
 	MaxIdempotencyKeyLength = 128
 )
 
@@ -22,6 +26,7 @@ type Video struct {
 	AuthorID       int64
 	Title          string
 	Description    string
+	Tags           []string
 	MediaURL       string
 	CoverURL       string
 	Status         int
@@ -35,7 +40,7 @@ type Video struct {
 }
 
 // NewPublished 创建一个直接发布的视频，适合当前项目的发布流程。
-func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempotencyKey string) (*Video, error) {
+func NewPublished(authorID int64, title, description string, tags []string, mediaURL, coverURL, idempotencyKey string) (*Video, error) {
 	if authorID <= 0 {
 		return nil, ErrInvalidAuthorID
 	}
@@ -55,6 +60,10 @@ func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempo
 	if len(description) > MaxDescriptionLength {
 		return nil, ErrDescriptionTooLong
 	}
+	normalizedTags, err := NormalizeTags(tags)
+	if err != nil {
+		return nil, err
+	}
 	if mediaURL == "" {
 		return nil, ErrEmptyMediaURL
 	}
@@ -71,6 +80,7 @@ func NewPublished(authorID int64, title, description, mediaURL, coverURL, idempo
 		AuthorID:       authorID,
 		Title:          title,
 		Description:    description,
+		Tags:           normalizedTags,
 		MediaURL:       mediaURL,
 		CoverURL:       coverURL,
 		Status:         StatusPublished,
@@ -85,6 +95,7 @@ func RestoreVideo(
 	authorID int64,
 	title string,
 	description string,
+	tags []string,
 	mediaURL string,
 	coverURL string,
 	status int,
@@ -110,6 +121,7 @@ func RestoreVideo(
 		AuthorID:       authorID,
 		Title:          title,
 		Description:    description,
+		Tags:           canonicalTags(tags),
 		MediaURL:       mediaURL,
 		CoverURL:       coverURL,
 		Status:         status,
@@ -121,6 +133,38 @@ func RestoreVideo(
 		UpdatedAt:      updatedAt,
 		IdempotencyKey: idempotencyKey,
 	}
+}
+
+// NormalizeTags 清理发布请求中的标签，并返回稳定排序的集合。
+func NormalizeTags(tags []string) ([]string, error) {
+	normalized := canonicalTags(tags)
+	if len(normalized) > MaxTagCount {
+		return nil, ErrTooManyTags
+	}
+	for _, tag := range normalized {
+		if utf8.RuneCountInString(tag) > MaxTagLength {
+			return nil, ErrTagTooLong
+		}
+	}
+	return normalized, nil
+}
+
+func canonicalTags(tags []string) []string {
+	normalized := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, value := range tags {
+		tag := strings.TrimSpace(value)
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		normalized = append(normalized, tag)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 // DeleteBy 执行作者权限校验并把视频置为删除状态。

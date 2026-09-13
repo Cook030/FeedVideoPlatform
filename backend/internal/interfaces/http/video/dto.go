@@ -8,10 +8,11 @@ import (
 
 // CreateVideoRequest 是发布视频的 JSON 请求体。
 type CreateVideoRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	MediaURL    string `json:"media_url"`
-	CoverURL    string `json:"cover_url"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+	MediaURL    string   `json:"media_url"`
+	CoverURL    string   `json:"cover_url"`
 }
 
 // videoResponse 是视频详情响应，包含视频主体字段和互动计数。
@@ -20,6 +21,7 @@ type videoResponse struct {
 	AuthorID      int64      `json:"author_id"`
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
+	Tags          []string   `json:"tags"`
 	MediaURL      string     `json:"media_url"`
 	CoverURL      string     `json:"cover_url"`
 	Status        int        `json:"status"`
@@ -45,6 +47,7 @@ func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 		AuthorID:      video.AuthorID,
 		Title:         video.Title,
 		Description:   video.Description,
+		Tags:          append([]string{}, video.Tags...),
 		MediaURL:      video.MediaURL,
 		CoverURL:      video.CoverURL,
 		Status:        video.Status,

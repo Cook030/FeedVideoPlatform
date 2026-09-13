@@ -15,6 +15,7 @@ import (
 	applicationrelation "GCFeed/internal/application/relation"
 	applicationupload "GCFeed/internal/application/upload"
 	applicationvideo "GCFeed/internal/application/video"
+	domainembedding "GCFeed/internal/domain/embedding"
 	infracache "GCFeed/internal/infra/cache"
 	infraconfig "GCFeed/internal/infra/config"
 	infracrypto "GCFeed/internal/infra/crypto"
@@ -93,7 +94,7 @@ func BuildAPI(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 	if cfg.Redis.Addr != "" {
 		redisClient := infracache.NewRedisClient(cfg.Redis)
 		feedCache = infracache.NewFeedCache(redisClient)
-		interestCache = infracache.NewUserInterestCache(redisClient)
+		interestCache = infracache.NewUserInterestCache(redisClient, domainembedding.HashNgramModel, domainembedding.HashNgramDimension)
 		// 消息实时通道使用独立 Redis 客户端做 Pub/Sub 扇出，支持 API 多实例。
 		messageStream = inforealtime.NewMessageStream(cfg.Redis)
 		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
@@ -101,7 +102,9 @@ func BuildAPI(ctx context.Context, g *gin.Engine, cfg *infraconfig.Config, db *s
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreRecorder(feedCache))
 		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
 	}
-	recommendationOptions := []infrarecommendation.Option{}
+	recommendationOptions := []infrarecommendation.Option{
+		infrarecommendation.WithEmbeddingSpec(domainembedding.HashNgramModel, domainembedding.HashNgramDimension),
+	}
 	if interestCache != nil {
 		recommendationOptions = append(recommendationOptions, infrarecommendation.WithUserInterestCache(interestCache))
 	}

@@ -18,6 +18,10 @@ func newUserInterestFakeRedis() *userInterestFakeRedis {
 	return &userInterestFakeRedis{values: map[string]string{}}
 }
 
+func newTestUserInterestCache(client redisUserInterestClient) *UserInterestCache {
+	return NewUserInterestCache(client, "test-model", 2)
+}
+
 func (r *userInterestFakeRedis) Get(ctx context.Context, key string) *redis.StringCmd {
 	value, ok := r.values[key]
 	if !ok {
@@ -60,7 +64,7 @@ func (r *userInterestFakeRedis) Del(ctx context.Context, keys ...string) *redis.
 func TestUserInterestCacheStoreAndLoad(t *testing.T) {
 	ctx := context.Background()
 	client := newUserInterestFakeRedis()
-	cache := NewUserInterestCache(client)
+	cache := newTestUserInterestCache(client)
 
 	if err := cache.Store(ctx, 42, []float64{1, 0}, 2); err != nil {
 		t.Fatalf("store: %v", err)
@@ -89,7 +93,7 @@ func TestUserInterestCacheStoreAndLoad(t *testing.T) {
 func TestUserInterestCacheApplyRequiresBaseline(t *testing.T) {
 	ctx := context.Background()
 	client := newUserInterestFakeRedis()
-	cache := NewUserInterestCache(client)
+	cache := newTestUserInterestCache(client)
 
 	if err := cache.Apply(ctx, 42, []float64{0, 1}, 1); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -110,7 +114,7 @@ func TestUserInterestCacheApplyRequiresBaseline(t *testing.T) {
 func TestUserInterestCacheApplyAddsWeightedVector(t *testing.T) {
 	ctx := context.Background()
 	client := newUserInterestFakeRedis()
-	cache := NewUserInterestCache(client)
+	cache := newTestUserInterestCache(client)
 
 	if err := cache.Store(ctx, 42, []float64{1, 0}, 2); err != nil {
 		t.Fatalf("store: %v", err)
@@ -132,12 +136,11 @@ func TestUserInterestCacheApplyAddsWeightedVector(t *testing.T) {
 	}
 }
 
-// TestUserInterestCacheApplySkipsDimensionMismatch 向量模型升级换维度时放弃增量，
-// 等 TTL 或下次回源重建，避免把不同维度的向量拼在一起。
-func TestUserInterestCacheApplySkipsDimensionMismatch(t *testing.T) {
+// TestUserInterestCacheApplyInvalidatesDimensionMismatch 校验维度变化会立即作废旧基线。
+func TestUserInterestCacheApplyInvalidatesDimensionMismatch(t *testing.T) {
 	ctx := context.Background()
 	client := newUserInterestFakeRedis()
-	cache := NewUserInterestCache(client)
+	cache := newTestUserInterestCache(client)
 
 	if err := cache.Store(ctx, 42, []float64{1, 0}, 1); err != nil {
 		t.Fatalf("store: %v", err)
@@ -146,17 +149,19 @@ func TestUserInterestCacheApplySkipsDimensionMismatch(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	vector, ok, err := cache.Load(ctx, 42)
-	if err != nil || !ok {
+	_, ok, err := cache.Load(ctx, 42)
+	if err != nil {
 		t.Fatalf("load: ok=%v err=%v", ok, err)
 	}
-	assertVector(t, vector, []float64{1, 0})
+	if ok {
+		t.Fatal("dimension mismatch must invalidate the cached baseline")
+	}
 }
 
 func TestUserInterestCacheInvalidate(t *testing.T) {
 	ctx := context.Background()
 	client := newUserInterestFakeRedis()
-	cache := NewUserInterestCache(client)
+	cache := newTestUserInterestCache(client)
 
 	if err := cache.Store(ctx, 42, []float64{1, 0}, 1); err != nil {
 		t.Fatalf("store: %v", err)
@@ -177,7 +182,7 @@ func TestUserInterestCacheInvalidate(t *testing.T) {
 func TestUserInterestCacheIgnoresInvalidInput(t *testing.T) {
 	ctx := context.Background()
 	client := newUserInterestFakeRedis()
-	cache := NewUserInterestCache(client)
+	cache := newTestUserInterestCache(client)
 
 	cases := []struct {
 		name string
@@ -205,7 +210,7 @@ func TestUserInterestCacheIgnoresInvalidInput(t *testing.T) {
 	if _, ok, err := nilCache.Load(ctx, 42); ok || err != nil {
 		t.Fatalf("nil cache load = ok:%v err:%v", ok, err)
 	}
-	if err := NewUserInterestCache(nil).Store(ctx, 42, []float64{1}, 1); err != nil {
+	if err := NewUserInterestCache(nil, "test-model", 1).Store(ctx, 42, []float64{1}, 1); err != nil {
 		t.Fatalf("nil client store: %v", err)
 	}
 }
@@ -224,7 +229,7 @@ func TestUserInterestSnapshotRejectsBrokenState(t *testing.T) {
 	}
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
-			vector := item.snapshot.vector()
+			vector := item.snapshot.vector(2)
 			if item.wantNil && vector != nil {
 				t.Fatalf("expected nil vector, got %v", vector)
 			}
@@ -232,6 +237,20 @@ func TestUserInterestSnapshotRejectsBrokenState(t *testing.T) {
 				t.Fatalf("unexpected vector %v", vector)
 			}
 		})
+	}
+}
+
+func TestUserInterestCacheKeyChangesWithModelAndDimension(t *testing.T) {
+	client := newUserInterestFakeRedis()
+	first := NewUserInterestCache(client, "model-v1", 2)
+	second := NewUserInterestCache(client, "model-v2", 2)
+	third := NewUserInterestCache(client, "model-v2", 3)
+
+	if first.userInterestKey(42) == second.userInterestKey(42) {
+		t.Fatal("model change must create a new cache namespace")
+	}
+	if second.userInterestKey(42) == third.userInterestKey(42) {
+		t.Fatal("dimension change must create a new cache namespace")
 	}
 }
 
