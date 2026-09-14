@@ -33,6 +33,7 @@ func NewRegisterRateLimit() gin.HandlerFunc {
 
 // NewIPRateLimit 返回按客户端 IP 限流的中间件。
 // 使用进程内令牌桶而非 Redis，是因为当前部署是单体单实例，最小改动即可生效。
+// burst 是桶容量
 func NewIPRateLimit(interval time.Duration, burst int) gin.HandlerFunc {
 	limiter := newVisitorLimiter(rate.Every(interval), burst)
 	return func(c *gin.Context) {
