@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// 以下用例迁移自 interfaces/http/message/stream_test.go，断言保持不变。
-
 func TestHubDispatchToLocalClient(t *testing.T) {
 	hub := NewHub()
 	client := hub.register(7)

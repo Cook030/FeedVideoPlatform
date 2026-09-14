@@ -15,7 +15,7 @@ import (
 // shutdownTimeout 是优雅退出时等待在途请求结束的最长时间。
 const shutdownTimeout = 10 * time.Second
 
-// sseLogSkipPaths 这些路由使用 query token 鉴权，跳过访问日志避免凭据泄露。
+// sseLogSkipPaths 这些路由通过 query 传递一次性 ticket，跳过访问日志避免凭据泄露。
 var sseLogSkipPaths = []string{"/api/messages/stream"}
 
 // Init 创建 Gin 引擎，并使用默认日志和恢复中间件。
