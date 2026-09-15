@@ -1,9 +1,11 @@
 package test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"sync"
 	"testing"
@@ -229,21 +231,39 @@ func (r *memoryRecommendationRepo) SaveExposures(ctx context.Context, writes []*
 func TestRecommendationExposureDecisionsAPI(t *testing.T) {
 	router := newRecommendationRouter()
 
-	saveResponse := performJSONRequest(
+	unauthorizedResponse := performInternalRecommendationRequest(
+		router,
+		http.MethodPost,
+		"/internal/exposure-decisions",
+		`{"user_id":42,"scene":"recommend","video_ids":[1]}`,
+		"",
+	)
+	requireStatus(t, unauthorizedResponse, http.StatusUnauthorized)
+
+	wrongTokenResponse := performInternalRecommendationRequest(
+		router,
+		http.MethodPost,
+		"/internal/exposure-decisions",
+		`{"user_id":42,"scene":"recommend","video_ids":[1]}`,
+		"wrong-token",
+	)
+	requireStatus(t, wrongTokenResponse, http.StatusUnauthorized)
+
+	saveResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/exposures",
 		`{"user_id":42,"scene":"recommend","request_id":"req-exp","video_ids":[1]}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, saveResponse, http.StatusCreated)
 
-	response := performJSONRequest(
+	response := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/exposure-decisions",
 		`{"user_id":42,"scene":"recommend","request_id":"req-decide","video_ids":[1,2,2,3]}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, response, http.StatusOK)
 
@@ -267,12 +287,12 @@ func TestRecommendationExposureDecisionsAPI(t *testing.T) {
 		}
 	}
 
-	badResponse := performJSONRequest(
+	badResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/exposure-decisions",
 		`{"user_id":42,"scene":"recommend","video_ids":[0]}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, badResponse, http.StatusBadRequest)
 }
@@ -280,12 +300,12 @@ func TestRecommendationExposureDecisionsAPI(t *testing.T) {
 func TestRecommendationCandidatesAPI(t *testing.T) {
 	router := newRecommendationRouter()
 
-	response := performJSONRequest(
+	response := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/recommendation-candidates",
 		`{"user_id":42,"scene":"recommend","request_id":"req-1","limit":2}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, response, http.StatusOK)
 
@@ -304,12 +324,12 @@ func TestRecommendationCandidatesAPI(t *testing.T) {
 		t.Fatalf("unexpected recommendation cursor: %+v", page)
 	}
 
-	nextResponse := performJSONRequest(
+	nextResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/recommendation-candidates",
 		fmt.Sprintf(`{"user_id":42,"scene":"recommend","cursor":%q,"limit":2}`, page.NextCursor),
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, nextResponse, http.StatusOK)
 
@@ -323,12 +343,12 @@ func TestRecommendationCandidatesAPI(t *testing.T) {
 func TestRecommendationExposuresAPI(t *testing.T) {
 	router := newRecommendationRouter()
 
-	firstResponse := performJSONRequest(
+	firstResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/exposures",
 		`{"user_id":42,"scene":"recommend","request_id":"req-exp","video_ids":[1,1,3]}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, firstResponse, http.StatusCreated)
 
@@ -338,12 +358,12 @@ func TestRecommendationExposuresAPI(t *testing.T) {
 		t.Fatalf("unexpected exposure response: %+v", first)
 	}
 
-	secondResponse := performJSONRequest(
+	secondResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/exposures",
 		`{"user_id":42,"scene":"recommend","request_id":"req-exp-2","video_ids":[1]}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, secondResponse, http.StatusCreated)
 
@@ -353,12 +373,12 @@ func TestRecommendationExposuresAPI(t *testing.T) {
 		t.Fatalf("unexpected repeated exposure response: %+v", second)
 	}
 
-	candidateResponse := performJSONRequest(
+	candidateResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/recommendation-candidates",
 		`{"user_id":42,"scene":"recommend","limit":10}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, candidateResponse, http.StatusOK)
 	var page recommendationAPIResponse
@@ -369,12 +389,12 @@ func TestRecommendationExposuresAPI(t *testing.T) {
 		}
 	}
 
-	missingResponse := performJSONRequest(
+	missingResponse := performInternalRecommendationRequest(
 		router,
 		http.MethodPost,
 		"/internal/exposures",
 		`{"user_id":42,"scene":"recommend","video_ids":[404]}`,
-		"",
+		testInternalToken,
 	)
 	requireStatus(t, missingResponse, http.StatusNotFound)
 }
@@ -418,12 +438,25 @@ func newRecommendationRouter() *gin.Engine {
 	)
 	handler := interfaceshttprecommendation.New(service)
 
-	internal := router.Group("/internal")
+	internal := router.Group("/internal", interfaceshttpmiddleware.NewInternalTokenAuth(testInternalToken))
 	internal.POST("/recommendation-candidates", handler.ListCandidates)
 	internal.POST("/exposure-decisions", handler.DecideExposures)
 	internal.POST("/exposures", handler.SaveExposures)
 
 	return router
+}
+
+func performInternalRecommendationRequest(router *gin.Engine, method, path, body, internalToken string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if internalToken != "" {
+		req.Header.Set("X-Internal-Token", internalToken)
+	}
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	return resp
 }
 
 func newRecommendFeedRouterWithJWT(t *testing.T, service *applicationfeed.Service) (*gin.Engine, *infrajwt.Manager) {

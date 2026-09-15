@@ -112,9 +112,9 @@ func Register(g *gin.Engine, deps Deps) {
 	api.POST("/playback-qos-reports", authMiddleware, playbackHandler.CreateQoSReport)
 
 	internal := g.Group("/internal")
-	internal.POST("/recommendation-candidates", recommendationHandler.ListCandidates)
-	internal.POST("/exposure-decisions", recommendationHandler.DecideExposures)
-	internal.POST("/exposures", recommendationHandler.SaveExposures)
+	internal.POST("/recommendation-candidates", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), recommendationHandler.ListCandidates)
+	internal.POST("/exposure-decisions", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), recommendationHandler.DecideExposures)
+	internal.POST("/exposures", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), recommendationHandler.SaveExposures)
 	internal.POST("/messages", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), messageHandler.Create)
 	internal.POST("/playback-qos-reports", interfaceshttpmiddleware.NewInternalTokenAuth(deps.InternalToken), playbackHandler.CreateInternalQoSReport)
 }
